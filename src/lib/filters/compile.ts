@@ -1,4 +1,4 @@
-import { filterableSampleFields, operatorsByKind, sampleFieldById } from "@/lib/schema/fields";
+import { filterableSampleFields, operatorsByKind, sampleFieldById, type FieldDefinition } from "@/lib/schema/fields";
 import type { FilterCondition, FilterNode, MapBounds, SqlFragment } from "./types";
 
 type CompileState = {
@@ -6,6 +6,10 @@ type CompileState = {
 };
 
 const EMPTY_FILTER: SqlFragment = { text: "TRUE", params: [] };
+
+function hasSampleColumn(field: FieldDefinition | undefined): field is FieldDefinition & { sampleColumn: string } {
+  return Boolean(field?.filterable && field.sampleColumn);
+}
 
 function addParam(state: CompileState, value: unknown) {
   state.params.push(value);
@@ -131,14 +135,20 @@ export function compileSampleFilter(filter?: FilterNode | null): SqlFragment {
   return { text: compileNode(filter, state, 1), params: state.params };
 }
 
-export function compileGlobalSearch(query: string | undefined): SqlFragment {
+export function compileGlobalSearch(query: string | undefined, searchField?: string | null): SqlFragment {
   const trimmed = query?.trim();
   if (!trimmed) return EMPTY_FILTER;
 
-  const searchable = filterableSampleFields.filter((field) => field.kind === "text" || field.kind === "enum");
+  const searchable =
+    searchField && searchField !== "all"
+      ? [sampleFieldById[searchField]].filter(hasSampleColumn)
+      : filterableSampleFields.filter(hasSampleColumn);
+
+  if (!searchable.length) return EMPTY_FILTER;
+
   const param = "$1";
   return {
-    text: `(${searchable.map((field) => `${field.sampleColumn} ILIKE ${param}`).join(" OR ")})`,
+    text: `(${searchable.map((field) => `coalesce(${field.sampleColumn}::text, '') ILIKE ${param}`).join(" OR ")})`,
     params: [`%${trimmed}%`]
   };
 }

@@ -24,6 +24,7 @@ const requestSchema = z.object({
   view: z.union([z.literal("table"), z.literal("map")]).default("table"),
   filter: filterNodeSchema.nullish(),
   globalSearch: z.string().optional(),
+  searchField: z.string().nullish(),
   sort: z
     .array(
       z.object({

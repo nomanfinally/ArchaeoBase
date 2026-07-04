@@ -188,9 +188,13 @@ export function DataTable({
   });
 
   return (
-    <div ref={parentRef} className="table-wrap">
-      <div className="data-table" style={{ width: Math.max(columns.reduce((sum, column) => sum + getColumnWidth(column.id ?? ""), 0), 980) }}>
-        <div className="table-head">
+    <div ref={parentRef} className="table-wrap" suppressHydrationWarning>
+      <div
+        className="data-table"
+        style={{ width: Math.max(columns.reduce((sum, column) => sum + getColumnWidth(column.id ?? ""), 0), 980) }}
+        suppressHydrationWarning
+      >
+        <div className="table-head" suppressHydrationWarning>
           {table.getHeaderGroups()[0]?.headers.map((header) => {
             const sorted = header.column.getIsSorted();
             const columnId = header.column.id;
@@ -199,6 +203,7 @@ export function DataTable({
                 className="th"
                 key={header.id}
                 style={columnStyle(columnId)}
+                suppressHydrationWarning
                 draggable={columnId !== "admixture"}
                 onDragStart={(event) => {
                   event.dataTransfer.setData("text/plain", columnId);
@@ -240,20 +245,21 @@ export function DataTable({
             );
           })}
         </div>
-        <div className="table-body" style={{ height: rowVirtualizer.getTotalSize() }}>
+        <div className="table-body" style={{ height: rowVirtualizer.getTotalSize() }} suppressHydrationWarning>
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const row = tableRows[virtualRow.index];
             return (
               <div
-                className="tr"
+                className={`tr ${virtualRow.index % 2 === 0 ? "row-even" : "row-odd"}`}
                 key={row.id}
+                suppressHydrationWarning
                 style={{
                   height: virtualRow.size,
                   transform: `translateY(${virtualRow.start}px)`
                 }}
               >
                 {row.getVisibleCells().map((cell) => (
-                  <div className="td" key={cell.id} title={formatValue(cell.getValue())} style={columnStyle(cell.column.id)}>
+                  <div className="td" key={cell.id} title={formatValue(cell.getValue())} style={columnStyle(cell.column.id)} suppressHydrationWarning>
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </div>
                 ))}

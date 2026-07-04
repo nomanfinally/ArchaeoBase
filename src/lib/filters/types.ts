@@ -34,6 +34,7 @@ export type QueryRequest = {
   view: "table" | "map";
   filter?: FilterNode | null;
   globalSearch?: string;
+  searchField?: string | null;
   sort?: SortSpec[];
   page?: number;
   pageSize?: number;

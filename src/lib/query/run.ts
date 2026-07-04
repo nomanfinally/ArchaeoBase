@@ -30,7 +30,7 @@ function offsetParams(text: string, offset: number) {
 
 function buildSampleWhere(request: QueryRequest, releaseId: string) {
   const filter = compileSampleFilter(request.filter);
-  const globalSearch = compileGlobalSearch(request.globalSearch);
+  const globalSearch = compileGlobalSearch(request.globalSearch, request.searchField);
   const mapBounds = request.view === "map" ? compileMapBounds(request.mapBounds) : { text: "TRUE", params: [] };
   const releaseFilter: SqlFragment = { text: "s.release_id = $1", params: [releaseId] };
 

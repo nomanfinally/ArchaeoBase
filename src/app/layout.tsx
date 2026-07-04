@@ -26,6 +26,17 @@ export default function RootLayout({
         }
       };
 
+      const cleanSubtree = (node) => {
+        cleanNode(node);
+        if (!node || node.nodeType !== 1 || !node.querySelectorAll) return;
+        node.querySelectorAll("[bis_skin_checked], [bis_register]").forEach(cleanNode);
+        node.querySelectorAll("*").forEach((child) => {
+          for (const attr of Array.from(child.attributes)) {
+            if (attr.name.startsWith("__processed_")) child.removeAttribute(attr.name);
+          }
+        });
+      };
+
       const cleanTree = () => {
         cleanNode(document.documentElement);
         cleanNode(document.body);
@@ -43,14 +54,11 @@ export default function RootLayout({
           if (mutation.type === "attributes" && shouldRemove(mutation.attributeName || "")) {
             cleanNode(mutation.target);
           }
-          mutation.addedNodes.forEach(cleanNode);
+          mutation.addedNodes.forEach(cleanSubtree);
         }
       });
       observer.observe(document.documentElement, { attributes: true, childList: true, subtree: true });
-      window.addEventListener("load", () => {
-        cleanTree();
-        observer.disconnect();
-      }, { once: true });
+      window.addEventListener("load", cleanTree, { once: true });
     })();
   `;
 

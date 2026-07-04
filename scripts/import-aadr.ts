@@ -4,6 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import pg from "pg";
+import { rebuildMapCache } from "../src/lib/map/cache";
 
 const { Pool } = pg;
 
@@ -259,7 +260,9 @@ async function main() {
     ]);
     await client.query("REFRESH MATERIALIZED VIEW sample_map_points");
     await client.query("COMMIT");
+    const cacheResult = await rebuildMapCache(pool, { releaseId });
     console.log(`\nImported ${rowCount} AADR rows into release '${release}'.`);
+    console.log(`Map cache rebuilt: ${cacheResult.samples} samples, ${cacheResult.groups} group sites.`);
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

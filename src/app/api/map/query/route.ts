@@ -38,20 +38,22 @@ const requestSchema = z.object({
       height: z.number()
     })
     .nullish(),
-  presentation: z.union([z.literal("smart_split"), z.literal("group_locations"), z.literal("sample_cloud")]).default("smart_split"),
+  presentation: z.union([z.literal("smart_split"), z.literal("group_locations"), z.literal("sample_cloud")]).default("sample_cloud"),
   combineNearbyGroups: z.boolean().optional(),
+  colorMode: z.union([z.literal("fixed"), z.literal("gradient")]).default("fixed"),
   colorBy: z
     .union([
-      z.literal("default"),
+      z.literal("single"),
       z.literal("sex"),
-      z.literal("period"),
-      z.literal("country"),
       z.literal("data_type"),
-      z.literal("assessment"),
-      z.literal("sample_count"),
-      z.literal("multi_site")
+      z.literal("y_haplogroup_initial"),
+      z.literal("mtdna_initial"),
+      z.literal("period")
     ])
-    .default("default")
+    .default("sex"),
+  gradientBy: z.union([z.literal("snp_1240k"), z.literal("snp_2m"), z.literal("coverage_1150k"), z.literal("date_mean_bp")]).default("snp_1240k"),
+  colorTheme: z.union([z.literal("light"), z.literal("dark")]).default("light"),
+  showGroupCounts: z.boolean().optional()
 });
 
 export async function POST(request: Request) {

@@ -18,10 +18,7 @@ const SAMPLE_MAP_SELECT_COLUMNS = [
   's.snp_1240k AS "snp_1240k"',
   's.molecular_sex AS "molecular_sex"',
   's.y_hap_isogg AS "y_hap_isogg"',
-  's.y_hap_terminal AS "y_hap_terminal"',
   's.mtdna_haplogroup AS "mtdna_haplogroup"',
-  's.data_type AS "data_type"',
-  's.assessment AS "assessment"',
   's.latitude AS "latitude"',
   's.longitude AS "longitude"'
 ];
@@ -181,13 +178,10 @@ async function queryGroups(request: QueryRequest) {
         string_agg(DISTINCT fs.locality, '; ' ORDER BY fs.locality) AS localities_text,
         count(DISTINCT fs.locality)::integer AS locality_count,
         count(DISTINCT CASE WHEN fs.has_coordinates THEN concat(fs.latitude, ',', fs.longitude) END)::integer AS coordinate_count,
-        (count(DISTINCT CASE WHEN fs.has_coordinates THEN concat(fs.latitude, ',', fs.longitude) END) > 1) AS is_multi_site,
         string_agg(DISTINCT fs.molecular_sex, ', ' ORDER BY fs.molecular_sex) AS molecular_sexes,
         string_agg(DISTINCT fs.publication, ', ' ORDER BY fs.publication) AS publications,
         string_agg(DISTINCT fs.y_hap_isogg, ', ' ORDER BY fs.y_hap_isogg) AS y_hap_isogg_list,
-        string_agg(DISTINCT fs.y_hap_terminal, ', ' ORDER BY fs.y_hap_terminal) AS y_hap_terminal_list,
         string_agg(DISTINCT fs.mtdna_haplogroup, ', ' ORDER BY fs.mtdna_haplogroup) AS mtdna_haplogroups,
-        string_agg(DISTINCT fs.assessment, ', ' ORDER BY fs.assessment) AS assessments,
         min(fs.date_mean_bp) AS date_min_bp,
         max(fs.date_mean_bp) AS date_max_bp,
         min(fs.date_mean_year_ce) AS year_min_ce,
@@ -196,7 +190,6 @@ async function queryGroups(request: QueryRequest) {
         avg(fs.longitude) FILTER (WHERE fs.has_coordinates)::double precision AS centroid_longitude,
         avg(fs.snp_1240k)::double precision AS snp_1240k_avg,
         avg(fs.snp_2m)::double precision AS snp_2m_avg,
-        avg(fs.coverage_1150k)::double precision AS coverage_1150k_avg,
         min(fs.snp_1240k) AS snp_1240k_min,
         max(fs.snp_1240k) AS snp_1240k_max
       FROM filtered_samples fs

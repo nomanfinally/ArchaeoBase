@@ -4,14 +4,18 @@ import type { FilterNode, MapBounds } from "@/lib/filters/types";
 export type MapPresentation = "smart_split" | "group_locations" | "sample_cloud";
 
 export type MapColorBy =
-  | "default"
+  | "single"
   | "sex"
-  | "period"
-  | "country"
   | "data_type"
-  | "assessment"
-  | "sample_count"
-  | "multi_site";
+  | "y_haplogroup_initial"
+  | "mtdna_initial"
+  | "period";
+
+export type MapColorMode = "fixed" | "gradient";
+
+export type MapGradientBy = "snp_1240k" | "snp_2m" | "coverage_1150k" | "date_mean_bp";
+
+export type MapColorTheme = "light" | "dark";
 
 export type MapViewport = {
   width: number;
@@ -27,10 +31,43 @@ export type MapQueryRequest = {
   viewport?: MapViewport | null;
   presentation?: MapPresentation;
   combineNearbyGroups?: boolean;
+  colorMode?: MapColorMode;
   colorBy?: MapColorBy;
+  gradientBy?: MapGradientBy;
+  colorTheme?: MapColorTheme;
+  showGroupCounts?: boolean;
 };
 
 export type MapPointKind = "aggregate" | "group" | "sample";
+
+export type MapLegendItem = {
+  label: string;
+  color: string;
+  count: number;
+};
+
+export type MapGradientStop = {
+  value: number;
+  label: string;
+  color: string;
+};
+
+export type MapLegend =
+  | {
+      kind: "categorical";
+      title: string;
+      items: MapLegendItem[];
+      totalItems: number;
+    }
+  | {
+      kind: "gradient";
+      title: string;
+      min: number | null;
+      max: number | null;
+      stops: MapGradientStop[];
+      ticks: Array<{ value: number; label: string }>;
+      unknownCount: number;
+    };
 
 export type MapPointProperties = {
   markerId: string;
@@ -41,8 +78,11 @@ export type MapPointProperties = {
   groupId: string;
   markerColor: string;
   colorLabel: string;
+  isUnknownColor: boolean;
   originalLatitude: number;
   originalLongitude: number;
+  displayLatitude: number;
+  displayLongitude: number;
   title: string;
   subtitle: string;
   popupRows: string;
@@ -76,6 +116,8 @@ export type MapQuerySummary = {
   mappedSamples: number;
   visibleSamples: number;
   visibleFeatures: number;
+  renderedSamples: number;
+  renderedGroups: number;
   unmappedSamples: number;
   coordinateIssues: number;
   presentation: MapPresentation;
@@ -85,6 +127,7 @@ export type MapQueryResponse = {
   release: { id: string; name: string; row_count: number };
   features: FeatureCollection<Point, MapPointProperties>;
   leaderLines: FeatureCollection<LineString, MapLineProperties>;
+  legend: MapLegend;
   summary: MapQuerySummary;
   unmappedSamples: {
     total: number;

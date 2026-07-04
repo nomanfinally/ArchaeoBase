@@ -2,36 +2,47 @@ import type { Feature, FeatureCollection, LineString, Point } from "geojson";
 import { getLatestReleaseId, getPool } from "@/lib/db";
 import { compileGlobalSearch, compileSampleFilter, mergeWhere } from "@/lib/filters/compile";
 import type { MapBounds, SqlFragment } from "@/lib/filters/types";
-import { assessCoordinate } from "./coordinate-sanity";
+import { UNKNOWN_COLOR } from "./cache";
 import type {
   MapColorBy,
+  MapColorMode,
+  MapColorTheme,
   MapCoordinateIssue,
+  MapGradientBy,
+  MapLegend,
   MapLineProperties,
   MapPointProperties,
   MapPresentation,
   MapQueryRequest,
   MapQueryResponse,
-  MapUnmappedSample,
-  MapViewport
+  MapUnmappedSample
 } from "./types";
 
 export const MAP_RENDER_CONSTANTS = {
-  groupSpacingPx: 24,
-  sampleSpacingPx: 8,
-  smartAggregateCellPx: 56,
-  maxSmartDisplacementPx: 32,
-  groupDisplacementCapPx: 80,
   sameSiteRadiusKm: 25,
   groupOutlierLinkKm: 75
 };
 
-export type SampleMapRow = {
-  id: string;
+type MapColorConfig = {
+  mode: MapColorMode;
+  fixedBy: MapColorBy;
+  gradientBy: MapGradientBy;
+  theme: MapColorTheme;
+};
+
+type CacheRow = {
+  sample_id: string;
+  release_id: string;
+  row_number: number;
   genetic_id: string | null;
   group_id: string | null;
+  group_site_key: string | null;
   locality: string | null;
   political_entity: string | null;
+  date_mean_bp: number | null;
   date_mean_year_ce: number | null;
+  coverage_1150k: number | null;
+  snp_2m: number | null;
   snp_1240k: number | null;
   molecular_sex: string | null;
   y_hap_isogg: string | null;
@@ -39,24 +50,109 @@ export type SampleMapRow = {
   mtdna_haplogroup: string | null;
   data_type: string | null;
   assessment: string | null;
-  latitude: number | null;
-  longitude: number | null;
+  coordinate_status: "ok" | "missing" | "issue";
+  coordinate_issue_reason: string | null;
+  suggested_latitude: number | null;
+  suggested_longitude: number | null;
+  original_latitude: number | null;
+  original_longitude: number | null;
+  display_latitude: number | null;
+  display_longitude: number | null;
+  site_cluster_id: string | null;
+  is_spatial_outlier: boolean;
+  outlier_target_latitude: number | null;
+  outlier_target_longitude: number | null;
+  single_label: string;
+  single_color_light: string;
+  single_color_dark: string;
+  sex_label: string;
+  sex_color_light: string;
+  sex_color_dark: string;
+  data_type_label: string;
+  data_type_color_light: string;
+  data_type_color_dark: string;
+  y_haplogroup_initial_label: string;
+  y_haplogroup_initial_color_light: string;
+  y_haplogroup_initial_color_dark: string;
+  mtdna_initial_label: string;
+  mtdna_initial_color_light: string;
+  mtdna_initial_color_dark: string;
+  period_label: string;
+  period_sort: number;
+  period_color_light: string;
+  period_color_dark: string;
+  gradient_snp_1240k_value: number | null;
+  gradient_snp_1240k_color_light: string;
+  gradient_snp_1240k_color_dark: string;
+  gradient_snp_2m_value: number | null;
+  gradient_snp_2m_color_light: string;
+  gradient_snp_2m_color_dark: string;
+  gradient_coverage_1150k_value: number | null;
+  gradient_coverage_1150k_color_light: string;
+  gradient_coverage_1150k_color_dark: string;
+  gradient_date_mean_bp_value: number | null;
+  gradient_date_mean_bp_color_light: string;
+  gradient_date_mean_bp_color_dark: string;
+  group_display_latitude: number | null;
+  group_display_longitude: number | null;
+  group_centroid_latitude: number | null;
+  group_centroid_longitude: number | null;
+  group_is_spatial_outlier: boolean | null;
+  group_outlier_target_latitude: number | null;
+  group_outlier_target_longitude: number | null;
 };
 
-type GroupSite = {
-  groupId: string;
-  rows: SampleMapRow[];
-  latitude: number;
-  longitude: number;
+type GroupedRows = {
+  key: string;
+  rows: CacheRow[];
+  displayLatitude: number;
+  displayLongitude: number;
+  centroidLatitude: number;
+  centroidLongitude: number;
   isOutlier: boolean;
-  primaryLatitude: number;
-  primaryLongitude: number;
+  outlierTargetLatitude: number | null;
+  outlierTargetLongitude: number | null;
 };
 
-const MAX_VISIBLE_ROWS = 60000;
+type LegendCacheRow = {
+  legend_kind: "categorical" | "gradient";
+  label: string;
+  color: string | null;
+  count: number;
+  min_value: number | null;
+  max_value: number | null;
+  stops: unknown;
+  ticks: unknown;
+  unknown_count: number;
+};
+
 const UNMAPPED_PREVIEW_LIMIT = 50;
 
-const categoryPalette = ["#c49a2c", "#bb4f8f", "#6b7899", "#2f6f4f", "#386cb0", "#a55f22", "#6d5798", "#24706b", "#9d3f4f", "#667085"];
+const fixedColumnMap: Record<MapColorBy, { label: keyof CacheRow; light: keyof CacheRow; dark: keyof CacheRow; title: string }> = {
+  single: { label: "single_label", light: "single_color_light", dark: "single_color_dark", title: "Single color" },
+  sex: { label: "sex_label", light: "sex_color_light", dark: "sex_color_dark", title: "Molecular sex" },
+  data_type: { label: "data_type_label", light: "data_type_color_light", dark: "data_type_color_dark", title: "Data type" },
+  y_haplogroup_initial: {
+    label: "y_haplogroup_initial_label",
+    light: "y_haplogroup_initial_color_light",
+    dark: "y_haplogroup_initial_color_dark",
+    title: "Y-DNA first letter"
+  },
+  mtdna_initial: { label: "mtdna_initial_label", light: "mtdna_initial_color_light", dark: "mtdna_initial_color_dark", title: "mtDNA first letter" },
+  period: { label: "period_label", light: "period_color_light", dark: "period_color_dark", title: "Period" }
+};
+
+const gradientColumnMap: Record<MapGradientBy, { value: keyof CacheRow; light: keyof CacheRow; dark: keyof CacheRow; title: string }> = {
+  snp_1240k: { value: "gradient_snp_1240k_value", light: "gradient_snp_1240k_color_light", dark: "gradient_snp_1240k_color_dark", title: "SNPs 1240k" },
+  snp_2m: { value: "gradient_snp_2m_value", light: "gradient_snp_2m_color_light", dark: "gradient_snp_2m_color_dark", title: "SNPs 2M" },
+  coverage_1150k: {
+    value: "gradient_coverage_1150k_value",
+    light: "gradient_coverage_1150k_color_light",
+    dark: "gradient_coverage_1150k_color_dark",
+    title: "Coverage 1.15M"
+  },
+  date_mean_bp: { value: "gradient_date_mean_bp_value", light: "gradient_date_mean_bp_color_light", dark: "gradient_date_mean_bp_color_dark", title: "Age BP" }
+};
 
 function asNumber(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -84,19 +180,6 @@ function formatYear(value: number | null) {
   return value <= 100 ? `${formatInteger(value)} AD` : `${formatInteger(value)} CE`;
 }
 
-function hashText(value: string) {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash << 5) - hash + value.charCodeAt(index);
-    hash |= 0;
-  }
-  return Math.abs(hash);
-}
-
-function stableSortKey(row: SampleMapRow) {
-  return `${row.group_id ?? ""}:${row.genetic_id ?? ""}:${row.id}`;
-}
-
 function truncateText(value: string, maxLength = 92) {
   if (value.length <= maxLength) return value;
   return `${value.slice(0, maxLength - 3).trimEnd()}...`;
@@ -112,8 +195,8 @@ function rowsJson(rows: Array<[string, string | number | null | undefined]>) {
   return JSON.stringify(makeRows(rows));
 }
 
-function normalizeSex(value: string) {
-  const text = value.trim().toLowerCase();
+function normalizeSex(value: string | null) {
+  const text = asText(value).trim().toLowerCase();
   if (!text) return "Unknown";
   if (text === "m" || text.includes("male")) return "Male";
   if (text === "f" || text.includes("female")) return "Female";
@@ -122,104 +205,121 @@ function normalizeSex(value: string) {
   return "Unknown";
 }
 
-function periodForYear(year: number | null) {
-  if (year === null) return "Unknown";
-  if (year < -10000) return "Paleolithic";
-  if (year < -3000) return "Neolithic";
-  if (year < -1200) return "Bronze Age";
-  if (year < -500) return "Iron Age";
-  if (year < 500) return "Classical";
-  if (year < 1500) return "Medieval";
-  return "Modern";
+function aggregateNumeric(rows: CacheRow[], field: MapGradientBy) {
+  const valueColumn = gradientColumnMap[field].value;
+  const values = rows.map((row) => asNumber(row[valueColumn])).filter((value): value is number => value !== null);
+  if (!values.length) return null;
+  return values.reduce((total, value) => total + value, 0) / values.length;
 }
 
-function colorForPeriod(label: string) {
-  const colors: Record<string, string> = {
-    Paleolithic: "#6b7280",
-    Neolithic: "#2f6f4f",
-    "Bronze Age": "#a55f22",
-    "Iron Age": "#6d5798",
-    Classical: "#386cb0",
-    Medieval: "#9d3f4f",
-    Modern: "#24706b",
-    Unknown: "#6b7899"
+function formatGradientValue(value: number | null, field: MapGradientBy) {
+  if (value === null) return "Unknown";
+  if (field === "coverage_1150k") return value.toFixed(value >= 1 ? 1 : 2);
+  if (field === "date_mean_bp") return `${formatInteger(value)} BP`;
+  return formatInteger(value);
+}
+
+function hexToRgb(hex: string) {
+  const normalized = hex.replace("#", "");
+  return {
+    r: Number.parseInt(normalized.slice(0, 2), 16),
+    g: Number.parseInt(normalized.slice(2, 4), 16),
+    b: Number.parseInt(normalized.slice(4, 6), 16)
   };
-  return colors[label] ?? colors.Unknown;
 }
 
-function colorForLabel(label: string) {
-  if (label === "Male") return "#386cb0";
-  if (label === "Female") return "#bb4f8f";
-  if (label === "Unknown") return "#6b7899";
-  return categoryPalette[hashText(label) % categoryPalette.length];
+function rgbToHex(r: number, g: number, b: number) {
+  return `#${[r, g, b].map((channel) => Math.round(Math.max(0, Math.min(255, channel))).toString(16).padStart(2, "0")).join("")}`;
 }
 
-function colorInfoForRows(rows: SampleMapRow[], colorBy: MapColorBy, kind: "sample" | "group" | "aggregate") {
-  if (kind === "aggregate") {
-    return { label: "Combined groups", color: "#516a8a" };
-  }
-
-  const first = rows[0];
-  if (!first) return { label: "Matched rows", color: "#2f6f4f" };
-  if (kind === "group" && rows.length > 1 && ["sex", "period", "country", "data_type", "assessment"].includes(colorBy)) {
-    return { label: "Grouped samples", color: "#4b5563" };
-  }
-
-  if (colorBy === "sex") {
-    const label = normalizeSex(asText(first.molecular_sex));
-    return { label, color: colorForLabel(label) };
-  }
-  if (colorBy === "period") {
-    const label = periodForYear(asNumber(first.date_mean_year_ce));
-    return { label, color: colorForPeriod(label) };
-  }
-  if (colorBy === "country") {
-    const label = asText(first.political_entity) || "Unknown";
-    return { label, color: colorForLabel(label) };
-  }
-  if (colorBy === "data_type") {
-    const label = asText(first.data_type) || "Unknown";
-    return { label, color: colorForLabel(label) };
-  }
-  if (colorBy === "assessment") {
-    const label = asText(first.assessment) || "Unknown";
-    return { label, color: colorForLabel(label) };
-  }
-  if (colorBy === "sample_count") {
-    const count = rows.length;
-    const label = count >= 50 ? "50+ samples" : count >= 10 ? "10-49 samples" : count >= 2 ? "2-9 samples" : "1 sample";
-    return { label, color: colorForLabel(label) };
-  }
-  if (colorBy === "multi_site") {
-    return { label: "Single site", color: "#2f6f4f" };
-  }
-  return { label: "Matched rows", color: "#2f6f4f" };
+function interpolateHex(startColor: string, endColor: string, amount: number) {
+  const start = hexToRgb(startColor);
+  const end = hexToRgb(endColor);
+  const clamped = Math.max(0, Math.min(1, amount));
+  return rgbToHex(start.r + (end.r - start.r) * clamped, start.g + (end.g - start.g) * clamped, start.b + (end.b - start.b) * clamped);
 }
 
-function sampleDetail(row: SampleMapRow) {
+function colorFromGradientLegend(value: number, legend: Extract<MapLegend, { kind: "gradient" }>) {
+  const stops = [...legend.stops].filter((stop) => Number.isFinite(stop.value)).sort((a, b) => a.value - b.value);
+  if (!stops.length) return UNKNOWN_COLOR;
+  if (value <= stops[0].value) return stops[0].color;
+  if (value >= stops[stops.length - 1].value) return stops[stops.length - 1].color;
+
+  for (let index = 0; index < stops.length - 1; index += 1) {
+    const start = stops[index];
+    const end = stops[index + 1];
+    if (value < start.value || value > end.value) continue;
+    const local = (value - start.value) / Math.max(0.000001, end.value - start.value);
+    return interpolateHex(start.color, end.color, local);
+  }
+
+  return stops[stops.length - 1].color;
+}
+
+function colorInfoForSample(row: CacheRow, config: MapColorConfig) {
+  if (config.mode === "fixed") {
+    const columns = fixedColumnMap[config.fixedBy];
+    const label = String(row[columns.label] ?? "Unknown");
+    const color = String(row[config.theme === "dark" ? columns.dark : columns.light] ?? UNKNOWN_COLOR);
+    return { label, color, isUnknown: label === "Unknown" || color === UNKNOWN_COLOR };
+  }
+
+  const columns = gradientColumnMap[config.gradientBy];
+  const value = asNumber(row[columns.value]);
+  const color = String(row[config.theme === "dark" ? columns.dark : columns.light] ?? UNKNOWN_COLOR);
+  const label = value === null ? "Unknown" : `${columns.title}: ${formatGradientValue(value, config.gradientBy)}`;
+  return { label, color, isUnknown: value === null || color === UNKNOWN_COLOR };
+}
+
+function colorInfoForGroup(rows: CacheRow[], config: MapColorConfig, legend: MapLegend) {
+  if (config.mode === "fixed") {
+    const columns = fixedColumnMap[config.fixedBy];
+    const labels = Array.from(new Set(rows.map((row) => String(row[columns.label] ?? "Unknown"))));
+    if (labels.length > 1) {
+      return { label: "Mixed group", color: config.theme === "dark" ? "#d1d5db" : "#4b5563", isUnknown: false };
+    }
+    return colorInfoForSample(rows[0], config);
+  }
+
+  const value = aggregateNumeric(rows, config.gradientBy);
+  if (legend.kind !== "gradient" || value === null) {
+    return { label: "Unknown", color: UNKNOWN_COLOR, isUnknown: true };
+  }
+  const color = colorFromGradientLegend(value, legend);
+  return {
+    label: `${gradientColumnMap[config.gradientBy].title}: ${formatGradientValue(value, config.gradientBy)}`,
+    color,
+    isUnknown: color === UNKNOWN_COLOR
+  };
+}
+
+function sampleDetail(row: CacheRow) {
   const geneticId = asText(row.genetic_id);
   const group = asText(row.group_id);
-  const title = group || geneticId || "Sample";
+  const title = geneticId || group || "Sample";
   const place = [asText(row.locality), asText(row.political_entity)].filter(Boolean).join(", ");
-  const yDna = asText(row.y_hap_terminal) || asText(row.y_hap_isogg);
+  const yDna = asText(row.y_hap_isogg);
   return {
     title,
     subtitle: place,
     popupRows: rowsJson([
+      ["Group", group],
       ["Sample", geneticId],
       ["Date", formatYear(asNumber(row.date_mean_year_ce))],
-      ["Sex", normalizeSex(asText(row.molecular_sex))],
+      ["Sex", normalizeSex(row.molecular_sex)],
       ["Y-DNA", yDna],
       ["mtDNA", asText(row.mtdna_haplogroup)],
-      ["SNPs", row.snp_1240k],
-      ["Data", asText(row.data_type)]
+      ["SNPs 1240k", row.snp_1240k],
+      ["SNPs 2M", row.snp_2m]
     ])
   };
 }
 
-function groupDetail(groupId: string, rows: SampleMapRow[]) {
+function groupDetail(groupId: string, rows: CacheRow[]) {
   const localities = Array.from(new Set(rows.map((row) => asText(row.locality)).filter(Boolean))).sort();
   const countries = Array.from(new Set(rows.map((row) => asText(row.political_entity)).filter(Boolean))).sort();
+  const yDna = Array.from(new Set(rows.map((row) => asText(row.y_hap_isogg)).filter(Boolean))).sort();
+  const mtDna = Array.from(new Set(rows.map((row) => asText(row.mtdna_haplogroup)).filter(Boolean))).sort();
   const years = rows.map((row) => asNumber(row.date_mean_year_ce)).filter((value): value is number => value !== null);
   const snps = rows.map((row) => asNumber(row.snp_1240k)).filter((value): value is number => value !== null);
   const avgSnps = snps.length ? Math.round(snps.reduce((total, value) => total + value, 0) / snps.length) : null;
@@ -232,20 +332,9 @@ function groupDetail(groupId: string, rows: SampleMapRow[]) {
       ["Date span", dateText],
       ["Countries", truncateText(countries.join(", "))],
       ["Localities", truncateText(localities.join("; "))],
-      ["Avg SNPs", avgSnps]
-    ])
-  };
-}
-
-function aggregateDetail(groupCount: number, sampleCount: number, rows: SampleMapRow[]) {
-  const countries = Array.from(new Set(rows.map((row) => asText(row.political_entity)).filter(Boolean))).sort();
-  return {
-    title: "Combined location",
-    subtitle: `${formatInteger(groupCount)} groups, ${formatInteger(sampleCount)} samples`,
-    popupRows: rowsJson([
-      ["Groups", groupCount],
-      ["Samples", sampleCount],
-      ["Countries", truncateText(countries.join(", "))]
+      ["Y-DNA", truncateText(yDna.join(", "))],
+      ["mtDNA", truncateText(mtDna.join(", "))],
+      ["Avg SNPs 1240k", avgSnps]
     ])
   };
 }
@@ -255,7 +344,9 @@ function pointFeature(
   kind: MapPointProperties["kind"],
   latitude: number,
   longitude: number,
-  properties: Omit<MapPointProperties, "markerId" | "kind" | "originalLatitude" | "originalLongitude">
+  originalLatitude: number,
+  originalLongitude: number,
+  properties: Omit<MapPointProperties, "markerId" | "kind" | "originalLatitude" | "originalLongitude" | "displayLatitude" | "displayLongitude">
 ): Feature<Point, MapPointProperties> {
   return {
     type: "Feature",
@@ -263,93 +354,30 @@ function pointFeature(
     properties: {
       markerId,
       kind,
-      originalLatitude: latitude,
-      originalLongitude: longitude,
+      originalLatitude,
+      originalLongitude,
+      displayLatitude: latitude,
+      displayLongitude: longitude,
       ...properties
     }
   };
 }
 
-function haversineKm(a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }) {
-  const radiusKm = 6371;
-  const toRad = Math.PI / 180;
-  const dLat = (b.latitude - a.latitude) * toRad;
-  const dLon = (b.longitude - a.longitude) * toRad;
-  const lat1 = a.latitude * toRad;
-  const lat2 = b.latitude * toRad;
-  const sinLat = Math.sin(dLat / 2);
-  const sinLon = Math.sin(dLon / 2);
-  const h = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
-  return 2 * radiusKm * Math.asin(Math.min(1, Math.sqrt(h)));
-}
-
-function averageCoordinate(rows: SampleMapRow[]) {
-  const points = rows.filter((row) => row.latitude !== null && row.longitude !== null) as Array<SampleMapRow & { latitude: number; longitude: number }>;
-  return {
-    latitude: points.reduce((total, row) => total + row.latitude, 0) / points.length,
-    longitude: points.reduce((total, row) => total + row.longitude, 0) / points.length
-  };
-}
-
-function clusterGroupSites(groupId: string, rows: SampleMapRow[]): GroupSite[] {
-  const sortedRows = [...rows].sort((a, b) => stableSortKey(a).localeCompare(stableSortKey(b)));
-  const clusters: Array<{ rows: SampleMapRow[]; latitude: number; longitude: number }> = [];
-
-  for (const row of sortedRows) {
-    if (row.latitude === null || row.longitude === null) continue;
-    const matching = clusters.find((cluster) =>
-      haversineKm({ latitude: row.latitude ?? 0, longitude: row.longitude ?? 0 }, cluster) <= MAP_RENDER_CONSTANTS.sameSiteRadiusKm
-    );
-    if (matching) {
-      matching.rows.push(row);
-      const average = averageCoordinate(matching.rows);
-      matching.latitude = average.latitude;
-      matching.longitude = average.longitude;
-    } else {
-      clusters.push({ rows: [row], latitude: row.latitude, longitude: row.longitude });
-    }
-  }
-
-  const primary = [...clusters].sort((a, b) => b.rows.length - a.rows.length || a.latitude - b.latitude || a.longitude - b.longitude)[0];
-  return clusters.map((cluster) => {
-    const distanceToPrimary = primary ? haversineKm(cluster, primary) : 0;
-    return {
-      groupId,
-      rows: cluster.rows,
-      latitude: cluster.latitude,
-      longitude: cluster.longitude,
-      isOutlier: Boolean(primary && cluster !== primary && distanceToPrimary >= MAP_RENDER_CONSTANTS.groupOutlierLinkKm),
-      primaryLatitude: primary?.latitude ?? cluster.latitude,
-      primaryLongitude: primary?.longitude ?? cluster.longitude
-    };
-  });
-}
-
-function groupRowsById(rows: SampleMapRow[]) {
-  const groups = new Map<string, SampleMapRow[]>();
-  for (const row of rows) {
-    const key = row.group_id || `No group ID:${row.genetic_id ?? row.id}`;
-    const current = groups.get(key);
-    if (current) current.push(row);
-    else groups.set(key, [row]);
-  }
-  return groups;
-}
-
-export function buildSampleFeatures(rows: SampleMapRow[], colorBy: MapColorBy) {
+export function buildSampleFeatures(rows: CacheRow[], colorConfig: MapColorConfig) {
   const features: Array<Feature<Point, MapPointProperties>> = [];
   for (const row of rows) {
-    if (row.latitude === null || row.longitude === null) continue;
-    const colorInfo = colorInfoForRows([row], colorBy, "sample");
+    if (row.display_latitude === null || row.display_longitude === null || row.original_latitude === null || row.original_longitude === null) continue;
+    const colorInfo = colorInfoForSample(row, colorConfig);
     const detail = sampleDetail(row);
     features.push(
-      pointFeature(`sample:${row.id}`, "sample", row.latitude, row.longitude, {
+      pointFeature(`sample:${row.sample_id}`, "sample", row.display_latitude, row.display_longitude, row.original_latitude, row.original_longitude, {
         label: "",
         sampleCount: 1,
         groupCount: row.group_id ? 1 : 0,
         groupId: row.group_id ?? "",
         markerColor: colorInfo.color,
         colorLabel: colorInfo.label,
+        isUnknownColor: colorInfo.isUnknown,
         ...detail
       })
     );
@@ -357,334 +385,116 @@ export function buildSampleFeatures(rows: SampleMapRow[], colorBy: MapColorBy) {
   return { features, leaderLines: [] as Array<Feature<LineString, MapLineProperties>> };
 }
 
-export function buildGroupFeatures(rows: SampleMapRow[], colorBy: MapColorBy) {
+function groupRows(rows: CacheRow[]) {
+  const grouped = new Map<string, GroupedRows>();
+  for (const row of rows) {
+    const key = row.group_site_key || `${row.group_id ?? row.genetic_id ?? row.sample_id}:0`;
+    const displayLatitude = row.group_display_latitude ?? row.display_latitude;
+    const displayLongitude = row.group_display_longitude ?? row.display_longitude;
+    const centroidLatitude = row.group_centroid_latitude ?? row.original_latitude;
+    const centroidLongitude = row.group_centroid_longitude ?? row.original_longitude;
+    if (displayLatitude === null || displayLongitude === null || centroidLatitude === null || centroidLongitude === null) continue;
+
+    const current = grouped.get(key);
+    if (current) {
+      current.rows.push(row);
+    } else {
+      grouped.set(key, {
+        key,
+        rows: [row],
+        displayLatitude,
+        displayLongitude,
+        centroidLatitude,
+        centroidLongitude,
+        isOutlier: Boolean(row.group_is_spatial_outlier ?? row.is_spatial_outlier),
+        outlierTargetLatitude: row.group_outlier_target_latitude ?? row.outlier_target_latitude,
+        outlierTargetLongitude: row.group_outlier_target_longitude ?? row.outlier_target_longitude
+      });
+    }
+  }
+  return Array.from(grouped.values()).sort((a, b) => a.key.localeCompare(b.key));
+}
+
+export function buildGroupFeatures(rows: CacheRow[], colorConfig: MapColorConfig, legend: MapLegend, showGroupCounts = true) {
   const features: Array<Feature<Point, MapPointProperties>> = [];
   const leaderLines: Array<Feature<LineString, MapLineProperties>> = [];
 
-  for (const [groupId, groupRows] of groupRowsById(rows)) {
-    const sites = clusterGroupSites(groupId, groupRows);
-    sites.forEach((site, siteIndex) => {
-      const colorInfo = colorInfoForRows(site.rows, colorBy, "group");
-      const detail = groupDetail(groupId, site.rows);
-      const markerId = `group:${groupId}:${siteIndex}`;
-      features.push(
-        pointFeature(markerId, "group", site.latitude, site.longitude, {
-          label: String(site.rows.length),
-          sampleCount: site.rows.length,
-          groupCount: 1,
-          groupId,
-          markerColor: colorInfo.color,
-          colorLabel: colorInfo.label,
-          ...detail
-        })
-      );
+  for (const group of groupRows(rows)) {
+    const first = group.rows[0];
+    const groupId = first.group_id || `No group ID:${first.genetic_id ?? first.sample_id}`;
+    const colorInfo = colorInfoForGroup(group.rows, colorConfig, legend);
+    const detail = groupDetail(groupId, group.rows);
+    const markerId = `group:${group.key}`;
+    features.push(
+      pointFeature(markerId, "group", group.displayLatitude, group.displayLongitude, group.centroidLatitude, group.centroidLongitude, {
+        label: showGroupCounts ? String(group.rows.length) : "",
+        sampleCount: group.rows.length,
+        groupCount: 1,
+        groupId,
+        markerColor: colorInfo.color,
+        colorLabel: colorInfo.label,
+        isUnknownColor: colorInfo.isUnknown,
+        ...detail
+      })
+    );
 
-      if (site.isOutlier) {
-        leaderLines.push({
-          type: "Feature",
-          geometry: {
-            type: "LineString",
-            coordinates: [
-              [site.primaryLongitude, site.primaryLatitude],
-              [site.longitude, site.latitude]
-            ]
-          },
-          properties: {
-            lineId: `outlier:${markerId}`,
-            kind: "outlier",
-            lineStyle: "dashed",
-            markerId,
-            strokeColor: colorInfo.color
-          }
-        });
-      }
-    });
-  }
-
-  return { features, leaderLines };
-}
-
-function mercatorY(latitude: number) {
-  const clamped = Math.max(-85.05112878, Math.min(85.05112878, latitude));
-  const rad = (clamped * Math.PI) / 180;
-  return Math.log(Math.tan(Math.PI / 4 + rad / 2));
-}
-
-function project(bounds: MapBounds, viewport: MapViewport, longitude: number, latitude: number) {
-  const width = Math.max(1, viewport.width);
-  const height = Math.max(1, viewport.height);
-  const west = bounds.west;
-  const east = bounds.east <= bounds.west ? bounds.east + 360 : bounds.east;
-  const adjustedLongitude = longitude < west ? longitude + 360 : longitude;
-  const northY = mercatorY(bounds.north);
-  const southY = mercatorY(bounds.south);
-  const ySpan = Math.max(0.000001, northY - southY);
-  return {
-    x: ((adjustedLongitude - west) / Math.max(0.000001, east - west)) * width,
-    y: ((northY - mercatorY(latitude)) / ySpan) * height
-  };
-}
-
-function unproject(bounds: MapBounds, viewport: MapViewport, x: number, y: number) {
-  const width = Math.max(1, viewport.width);
-  const height = Math.max(1, viewport.height);
-  const west = bounds.west;
-  const east = bounds.east <= bounds.west ? bounds.east + 360 : bounds.east;
-  const longitudeRaw = west + (x / width) * (east - west);
-  const longitude = longitudeRaw > 180 ? longitudeRaw - 360 : longitudeRaw;
-  const northY = mercatorY(bounds.north);
-  const southY = mercatorY(bounds.south);
-  const mercY = northY - (y / height) * (northY - southY);
-  const latitude = (Math.atan(Math.sinh(mercY)) * 180) / Math.PI;
-  return { latitude, longitude };
-}
-
-function buildAggregateFeatures(rows: SampleMapRow[], colorBy: MapColorBy, bounds: MapBounds, viewport: MapViewport) {
-  const cells = new Map<string, SampleMapRow[]>();
-
-  for (const row of rows) {
-    if (row.latitude === null || row.longitude === null) continue;
-    const screen = project(bounds, viewport, row.longitude, row.latitude);
-    const cellX = Math.floor(screen.x / MAP_RENDER_CONSTANTS.smartAggregateCellPx);
-    const cellY = Math.floor(screen.y / MAP_RENDER_CONSTANTS.smartAggregateCellPx);
-    const key = `${cellX}:${cellY}`;
-    const current = cells.get(key);
-    if (current) current.push(row);
-    else cells.set(key, [row]);
-  }
-
-  const features: Array<Feature<Point, MapPointProperties>> = [];
-  Array.from(cells.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .forEach(([key, cellRows]) => {
-      const groups = new Set(cellRows.map((row) => row.group_id || `sample:${row.id}`));
-      const center = averageCoordinate(cellRows);
-      const colorInfo = colorInfoForRows(cellRows, colorBy, "aggregate");
-      const detail = aggregateDetail(groups.size, cellRows.length, cellRows);
-      features.push(
-        pointFeature(`aggregate:${key}`, "aggregate", center.latitude, center.longitude, {
-          label: `${groups.size} | ${cellRows.length}`,
-          sampleCount: cellRows.length,
-          groupCount: groups.size,
-          groupId: "",
-          markerColor: colorInfo.color,
-          colorLabel: colorInfo.label,
-          ...detail
-        })
-      );
-    });
-
-  return { features, leaderLines: [] as Array<Feature<LineString, MapLineProperties>> };
-}
-
-export function buildSmartFeatures(
-  rows: SampleMapRow[],
-  colorBy: MapColorBy,
-  bounds: MapBounds,
-  viewport: MapViewport,
-  zoom: number,
-  combineNearbyGroups: boolean
-) {
-  if (zoom >= 7) return buildSampleFeatures(rows, colorBy);
-  if (zoom >= 4 || !combineNearbyGroups) return buildGroupFeatures(rows, colorBy);
-  return buildAggregateFeatures(rows, colorBy, bounds, viewport);
-}
-
-type LayoutCluster = {
-  features: Array<Feature<Point, MapPointProperties>>;
-  x: number;
-  y: number;
-};
-
-function layoutSettings(kind: MapPointProperties["kind"]) {
-  if (kind === "sample") {
-    return {
-      spacing: MAP_RENDER_CONSTANTS.sampleSpacingPx,
-      cap: MAP_RENDER_CONSTANTS.maxSmartDisplacementPx,
-      drawLeader: false
-    };
-  }
-  if (kind === "aggregate") {
-    return {
-      spacing: MAP_RENDER_CONSTANTS.smartAggregateCellPx,
-      cap: MAP_RENDER_CONSTANTS.maxSmartDisplacementPx,
-      drawLeader: false
-    };
-  }
-  return {
-    spacing: MAP_RENDER_CONSTANTS.groupSpacingPx,
-    cap: MAP_RENDER_CONSTANTS.groupDisplacementCapPx,
-    drawLeader: true
-  };
-}
-
-function clusterFeatures(features: Array<Feature<Point, MapPointProperties>>, bounds: MapBounds, viewport: MapViewport, spacing: number) {
-  const grid = new Map<string, LayoutCluster[]>();
-  const clusters: LayoutCluster[] = [];
-  const cellSize = Math.max(1, spacing);
-
-  for (const feature of features) {
-    const [longitude, latitude] = feature.geometry.coordinates;
-    const screen = project(bounds, viewport, longitude, latitude);
-    const cellX = Math.floor(screen.x / cellSize);
-    const cellY = Math.floor(screen.y / cellSize);
-    let target: LayoutCluster | null = null;
-
-    for (let dx = -1; dx <= 1 && !target; dx += 1) {
-      for (let dy = -1; dy <= 1 && !target; dy += 1) {
-        const candidates = grid.get(`${cellX + dx}:${cellY + dy}`) ?? [];
-        target = candidates.find((cluster) => Math.hypot(cluster.x - screen.x, cluster.y - screen.y) < spacing) ?? null;
-      }
-    }
-
-    if (target) {
-      target.features.push(feature);
-      target.x = (target.x * (target.features.length - 1) + screen.x) / target.features.length;
-      target.y = (target.y * (target.features.length - 1) + screen.y) / target.features.length;
-    } else {
-      target = { features: [feature], x: screen.x, y: screen.y };
-      clusters.push(target);
-      const key = `${cellX}:${cellY}`;
-      const existing = grid.get(key);
-      if (existing) existing.push(target);
-      else grid.set(key, [target]);
-    }
-  }
-
-  return clusters;
-}
-
-function offsetFor(index: number, total: number, spacing: number, cap: number, seed: number, kind: MapPointProperties["kind"]) {
-  if (total <= 1) return { dx: 0, dy: 0 };
-  const dynamicCap = kind === "sample" ? Math.max(cap, Math.min(180, Math.sqrt(total) * spacing * 1.55)) : cap;
-  if (index === 0 && total < 4) return { dx: 0, dy: 0 };
-  const ring = Math.floor(Math.sqrt(index));
-  const radius = Math.min(dynamicCap, Math.max(spacing, ring * spacing * 0.9));
-  const angle = ((index * 137.508 + seed) * Math.PI) / 180;
-  return {
-    dx: Math.cos(angle) * radius,
-    dy: Math.sin(angle) * radius
-  };
-}
-
-export function applyMapLayout(
-  features: Array<Feature<Point, MapPointProperties>>,
-  leaderLines: Array<Feature<LineString, MapLineProperties>>,
-  bounds: MapBounds,
-  viewport: MapViewport
-) {
-  const byKind = new Map<MapPointProperties["kind"], Array<Feature<Point, MapPointProperties>>>();
-  features.forEach((feature) => {
-    const current = byKind.get(feature.properties.kind);
-    if (current) current.push(feature);
-    else byKind.set(feature.properties.kind, [feature]);
-  });
-
-  const nextFeatures: Array<Feature<Point, MapPointProperties>> = [];
-  const nextLeaderLines = [...leaderLines];
-
-  for (const [kind, kindFeatures] of byKind) {
-    const settings = layoutSettings(kind);
-    const clusters = clusterFeatures(kindFeatures, bounds, viewport, settings.spacing);
-    for (const cluster of clusters) {
-      const sortedFeatures = [...cluster.features].sort((a, b) => a.properties.markerId.localeCompare(b.properties.markerId));
-      sortedFeatures.forEach((feature, index) => {
-        const seed = hashText(feature.properties.markerId) % 360;
-        const offset = offsetFor(index, sortedFeatures.length, settings.spacing, settings.cap, seed, kind);
-        const screen = project(bounds, viewport, feature.properties.originalLongitude, feature.properties.originalLatitude);
-        const nextCoordinate = unproject(bounds, viewport, screen.x + offset.dx, screen.y + offset.dy);
-        const nextFeature = {
-          ...feature,
-          geometry: {
-            ...feature.geometry,
-            coordinates: [nextCoordinate.longitude, nextCoordinate.latitude] as [number, number]
-          }
-        };
-        nextFeatures.push(nextFeature);
-
-        if (settings.drawLeader && Math.hypot(offset.dx, offset.dy) > 1.5) {
-          nextLeaderLines.push({
-            type: "Feature",
-            geometry: {
-              type: "LineString",
-              coordinates: [
-                [feature.properties.originalLongitude, feature.properties.originalLatitude],
-                [nextCoordinate.longitude, nextCoordinate.latitude]
-              ]
-            },
-            properties: {
-              lineId: `displacement:${feature.properties.markerId}`,
-              kind: "displacement",
-              lineStyle: "solid",
-              markerId: feature.properties.markerId,
-              strokeColor: feature.properties.markerColor
-            }
-          });
+    if (group.isOutlier && group.outlierTargetLatitude !== null && group.outlierTargetLongitude !== null) {
+      leaderLines.push({
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [group.outlierTargetLongitude, group.outlierTargetLatitude],
+            [group.centroidLongitude, group.centroidLatitude]
+          ]
+        },
+        properties: {
+          lineId: `outlier:${markerId}`,
+          kind: "outlier",
+          lineStyle: "dashed",
+          markerId,
+          strokeColor: colorInfo.color
         }
       });
     }
   }
 
-  return {
-    features: nextFeatures,
-    leaderLines: nextLeaderLines
-  };
+  return { features, leaderLines };
 }
 
-function normalizeBounds(bounds?: MapBounds | null): MapBounds {
-  if (!bounds) return { west: -180, south: -85, east: 180, north: 85 };
-  return {
-    west: Math.max(-180, Math.min(180, bounds.west)),
-    south: Math.max(-85, Math.min(85, bounds.south)),
-    east: Math.max(-180, Math.min(180, bounds.east)),
-    north: Math.max(-85, Math.min(85, bounds.north))
-  };
+function mapBoundsFragment(_bounds: MapBounds | null | undefined): SqlFragment {
+  return { text: "TRUE", params: [] };
 }
 
-function normalizeViewport(viewport?: MapViewport | null): MapViewport {
-  return {
-    width: Math.max(320, Math.min(4096, Math.round(viewport?.width ?? 1280))),
-    height: Math.max(240, Math.min(4096, Math.round(viewport?.height ?? 720)))
-  };
-}
-
-function normalizeZoom(value: unknown) {
-  const parsed = Number(value ?? 1.5);
-  if (!Number.isFinite(parsed)) return 1.5;
-  return Math.max(0, Math.min(18, parsed));
-}
-
-function mapBoundsFragment(bounds: MapBounds | null | undefined): SqlFragment {
-  if (!bounds) return { text: "TRUE", params: [] };
-  return {
-    text: "mp.geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)",
-    params: [bounds.west, bounds.south, bounds.east, bounds.north]
-  };
-}
-
-export function buildMapSampleWhere(request: MapQueryRequest, releaseId: string, options: { requireCoordinates?: boolean; bounds?: MapBounds | null; missingCoordinates?: boolean } = {}) {
+export function buildMapSampleWhere(
+  request: MapQueryRequest,
+  releaseId: string,
+  options: { requireCoordinates?: boolean; bounds?: MapBounds | null; missingCoordinates?: boolean; coordinateIssues?: boolean } = {}
+) {
   const filter = compileSampleFilter(request.filter);
   const globalSearch = compileGlobalSearch(request.globalSearch, request.searchField);
   const releaseFilter: SqlFragment = { text: "s.release_id = $1", params: [releaseId] };
   const coordinateFilter: SqlFragment = options.requireCoordinates
-    ? { text: "mp.has_coordinates IS TRUE AND mp.latitude IS NOT NULL AND mp.longitude IS NOT NULL AND mp.geom IS NOT NULL", params: [] }
+    ? { text: "sc.coordinate_status = 'ok' AND sc.display_latitude IS NOT NULL AND sc.display_longitude IS NOT NULL", params: [] }
     : options.missingCoordinates
-      ? { text: "(s.has_coordinates IS NOT TRUE OR s.latitude IS NULL OR s.longitude IS NULL)", params: [] }
-      : { text: "TRUE", params: [] };
+      ? { text: "sc.coordinate_status = 'missing'", params: [] }
+      : options.coordinateIssues
+        ? { text: "sc.coordinate_status = 'issue'", params: [] }
+        : { text: "TRUE", params: [] };
   return mergeWhere([releaseFilter, filter, globalSearch, coordinateFilter, mapBoundsFragment(options.bounds)]);
 }
 
-function issuePreview(row: SampleMapRow, assessment: ReturnType<typeof assessCoordinate>): MapCoordinateIssue {
+function issuePreview(row: CacheRow): MapCoordinateIssue {
   return {
     geneticId: asText(row.genetic_id),
     groupId: asText(row.group_id),
     locality: asText(row.locality),
     politicalEntity: asText(row.political_entity),
-    latitude: row.latitude ?? 0,
-    longitude: row.longitude ?? 0,
-    reason: assessment.reason,
-    suggestedLatitude: assessment.suggestedLatitude,
-    suggestedLongitude: assessment.suggestedLongitude
+    latitude: row.original_latitude ?? 0,
+    longitude: row.original_longitude ?? 0,
+    reason: row.coordinate_issue_reason ?? "Coordinate needs review",
+    suggestedLatitude: row.suggested_latitude,
+    suggestedLongitude: row.suggested_longitude
   };
 }
 
@@ -701,27 +511,229 @@ function collection<TGeometry extends Point | LineString, TProperties>(features:
   return { type: "FeatureCollection", features };
 }
 
+function parseJsonArray<T>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed as T[] : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function emptyLegend(config: MapColorConfig): MapLegend {
+  if (config.mode === "gradient") {
+    return {
+      kind: "gradient",
+      title: gradientColumnMap[config.gradientBy].title,
+      min: null,
+      max: null,
+      stops: [],
+      ticks: [],
+      unknownCount: 0
+    };
+  }
+  return {
+    kind: "categorical",
+    title: fixedColumnMap[config.fixedBy].title,
+    items: [],
+    totalItems: 0
+  };
+}
+
+async function loadLegend(releaseId: string, config: MapColorConfig): Promise<MapLegend> {
+  const pool = getPool();
+  const field = config.mode === "fixed" ? config.fixedBy : config.gradientBy;
+  const result = await pool.query<LegendCacheRow>(
+    `
+      SELECT legend_kind, label, color, count, min_value, max_value, stops, ticks, unknown_count
+      FROM map_legend_cache
+      WHERE release_id = $1 AND color_mode = $2 AND color_field = $3 AND theme = $4
+      ORDER BY sort_order ASC, label ASC
+    `,
+    [releaseId, config.mode, field, config.theme]
+  );
+
+  if (!result.rows.length) return emptyLegend(config);
+  const first = result.rows[0];
+  if (first.legend_kind === "gradient") {
+    return {
+      kind: "gradient",
+      title: first.label,
+      min: first.min_value,
+      max: first.max_value,
+      stops: parseJsonArray(first.stops),
+      ticks: parseJsonArray(first.ticks),
+      unknownCount: first.unknown_count ?? 0
+    };
+  }
+
+  return {
+    kind: "categorical",
+    title: fixedColumnMap[config.fixedBy].title,
+    items: result.rows.map((row) => ({
+      label: row.label,
+      color: row.color ?? UNKNOWN_COLOR,
+      count: row.count ?? 0
+    })),
+    totalItems: result.rows.length
+  };
+}
+
+function filteredLegend(cachedLegend: MapLegend, rows: CacheRow[], config: MapColorConfig): MapLegend {
+  if (config.mode === "gradient") {
+    if (cachedLegend.kind !== "gradient") return emptyLegend(config);
+    const valueColumn = gradientColumnMap[config.gradientBy].value;
+    return {
+      ...cachedLegend,
+      unknownCount: rows.filter((row) => asNumber(row[valueColumn]) === null).length
+    };
+  }
+
+  const columns = fixedColumnMap[config.fixedBy];
+  const counts = new Map<string, { color: string; count: number; sort: number }>();
+  for (const row of rows) {
+    const label = String(row[columns.label] ?? "Unknown");
+    const color = String(row[config.theme === "dark" ? columns.dark : columns.light] ?? UNKNOWN_COLOR);
+    const current = counts.get(label);
+    if (current) {
+      current.count += 1;
+      continue;
+    }
+    counts.set(label, {
+      color,
+      count: 1,
+      sort: config.fixedBy === "period" ? asNumber(row.period_sort) ?? 999999 : label === "Unknown" ? 999999 : label.charCodeAt(0)
+    });
+  }
+
+  const items = Array.from(counts.entries())
+    .sort(([labelA, itemA], [labelB, itemB]) => itemA.sort - itemB.sort || labelA.localeCompare(labelB))
+    .map(([label, item]) => ({ label, color: item.color, count: item.count }));
+
+  return {
+    kind: "categorical",
+    title: fixedColumnMap[config.fixedBy].title,
+    items,
+    totalItems: items.length
+  };
+}
+
+const cacheSelect = `
+  sc.sample_id::text,
+  sc.release_id::text,
+  sc.row_number,
+  sc.genetic_id,
+  sc.group_id,
+  sc.group_site_key,
+  sc.locality,
+  sc.political_entity,
+  sc.date_mean_bp,
+  sc.date_mean_year_ce,
+  sc.coverage_1150k,
+  sc.snp_2m,
+  sc.snp_1240k,
+  sc.molecular_sex,
+  sc.y_hap_isogg,
+  sc.y_hap_terminal,
+  sc.mtdna_haplogroup,
+  sc.data_type,
+  sc.assessment,
+  sc.coordinate_status,
+  sc.coordinate_issue_reason,
+  sc.suggested_latitude,
+  sc.suggested_longitude,
+  sc.original_latitude,
+  sc.original_longitude,
+  sc.display_latitude,
+  sc.display_longitude,
+  sc.site_cluster_id,
+  sc.is_spatial_outlier,
+  sc.outlier_target_latitude,
+  sc.outlier_target_longitude,
+  sc.single_label,
+  sc.single_color_light,
+  sc.single_color_dark,
+  sc.sex_label,
+  sc.sex_color_light,
+  sc.sex_color_dark,
+  sc.data_type_label,
+  sc.data_type_color_light,
+  sc.data_type_color_dark,
+  sc.y_haplogroup_initial_label,
+  sc.y_haplogroup_initial_color_light,
+  sc.y_haplogroup_initial_color_dark,
+  sc.mtdna_initial_label,
+  sc.mtdna_initial_color_light,
+  sc.mtdna_initial_color_dark,
+  sc.period_label,
+  sc.period_sort,
+  sc.period_color_light,
+  sc.period_color_dark,
+  sc.gradient_snp_1240k_value,
+  sc.gradient_snp_1240k_color_light,
+  sc.gradient_snp_1240k_color_dark,
+  sc.gradient_snp_2m_value,
+  sc.gradient_snp_2m_color_light,
+  sc.gradient_snp_2m_color_dark,
+  sc.gradient_coverage_1150k_value,
+  sc.gradient_coverage_1150k_color_light,
+  sc.gradient_coverage_1150k_color_dark,
+  sc.gradient_date_mean_bp_value,
+  sc.gradient_date_mean_bp_color_light,
+  sc.gradient_date_mean_bp_color_dark,
+  gc.display_latitude AS group_display_latitude,
+  gc.display_longitude AS group_display_longitude,
+  gc.centroid_latitude AS group_centroid_latitude,
+  gc.centroid_longitude AS group_centroid_longitude,
+  gc.is_spatial_outlier AS group_is_spatial_outlier,
+  gc.outlier_target_latitude AS group_outlier_target_latitude,
+  gc.outlier_target_longitude AS group_outlier_target_longitude
+`;
+
 export async function runMapQuery(request: MapQueryRequest): Promise<MapQueryResponse> {
   const pool = getPool();
   const release = await getLatestReleaseId();
-  const presentation: MapPresentation = request.presentation ?? "smart_split";
-  const colorBy = request.colorBy ?? "default";
-  const bounds = normalizeBounds(request.bounds);
-  const viewport = normalizeViewport(request.viewport);
-  const zoom = normalizeZoom(request.zoom);
-  const combineNearbyGroups = request.combineNearbyGroups !== false;
+  const presentation: MapPresentation = request.presentation === "group_locations" ? "group_locations" : "sample_cloud";
+  const colorConfig: MapColorConfig = {
+    mode: request.colorMode ?? "fixed",
+    fixedBy: request.colorBy ?? "sex",
+    gradientBy: request.gradientBy ?? "snp_1240k",
+    theme: request.colorTheme ?? "light"
+  };
+  const showGroupCounts = request.showGroupCounts !== false;
 
   const allWhere = buildMapSampleWhere(request, release.id);
   const missingWhere = buildMapSampleWhere(request, release.id, { missingCoordinates: true });
-  const mappedWhere = buildMapSampleWhere(request, release.id, { requireCoordinates: true, bounds });
+  const issueWhere = buildMapSampleWhere(request, release.id, { coordinateIssues: true });
+  const mappedWhere = buildMapSampleWhere(request, release.id, { requireCoordinates: true });
+
+  const totalRows = await pool.query(
+    `SELECT count(*)::integer AS total_matched FROM samples s WHERE ${allWhere.text}`,
+    allWhere.params
+  );
+  const cacheRows = await pool.query(
+    "SELECT count(*)::integer AS cached_samples FROM sample_map_cache WHERE release_id = $1",
+    [release.id]
+  );
+  const totalMatched = totalRows.rows[0]?.total_matched ?? 0;
+  const cachedSamples = cacheRows.rows[0]?.cached_samples ?? 0;
+  if (totalMatched > 0 && cachedSamples === 0) {
+    throw new Error("Map cache is empty. Run npm run db:migrate and npm run db:rebuild-map.");
+  }
 
   const counts = await pool.query(
     `
       SELECT
         count(*)::integer AS total_matched,
-        count(*) FILTER (WHERE s.has_coordinates IS TRUE AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL)::integer AS mapped_samples,
-        count(*) FILTER (WHERE s.has_coordinates IS NOT TRUE OR s.latitude IS NULL OR s.longitude IS NULL)::integer AS unmapped_samples
+        count(*) FILTER (WHERE sc.coordinate_status = 'ok')::integer AS mapped_samples,
+        count(*) FILTER (WHERE sc.coordinate_status = 'missing')::integer AS unmapped_samples,
+        count(*) FILTER (WHERE sc.coordinate_status = 'issue')::integer AS coordinate_issues
       FROM samples s
+      LEFT JOIN sample_map_cache sc ON sc.sample_id = s.id
       WHERE ${allWhere.text}
     `,
     allWhere.params
@@ -729,79 +741,69 @@ export async function runMapQuery(request: MapQueryRequest): Promise<MapQueryRes
 
   const missingRows = await pool.query(
     `
-      SELECT s.genetic_id, s.group_id, s.locality, s.political_entity
+      SELECT sc.genetic_id, sc.group_id, sc.locality, sc.political_entity
       FROM samples s
+      JOIN sample_map_cache sc ON sc.sample_id = s.id
       WHERE ${missingWhere.text}
-      ORDER BY s.genetic_id ASC
+      ORDER BY sc.genetic_id ASC NULLS LAST, sc.sample_id ASC
       LIMIT $${missingWhere.params.length + 1}
     `,
     [...missingWhere.params, UNMAPPED_PREVIEW_LIMIT]
   );
 
-  const mappedRows = await pool.query<SampleMapRow>(
+  const issueRows = await pool.query<CacheRow>(
     `
-      SELECT
-        s.id::text,
-        mp.genetic_id,
-        mp.group_id,
-        mp.locality,
-        mp.political_entity,
-        mp.date_mean_year_ce,
-        mp.snp_1240k,
-        mp.molecular_sex,
-        mp.y_hap_isogg,
-        mp.y_hap_terminal,
-        mp.mtdna_haplogroup,
-        mp.data_type,
-        mp.assessment,
-        mp.latitude,
-        mp.longitude
+      SELECT ${cacheSelect}
       FROM samples s
-      JOIN sample_map_points mp ON mp.sample_id = s.id
-      WHERE ${mappedWhere.text}
-      ORDER BY s.id ASC
-      LIMIT $${mappedWhere.params.length + 1}
+      JOIN sample_map_cache sc ON sc.sample_id = s.id
+      LEFT JOIN group_map_cache gc ON gc.release_id = sc.release_id AND gc.group_site_key = sc.group_site_key
+      WHERE ${issueWhere.text}
+      ORDER BY sc.genetic_id ASC NULLS LAST, sc.sample_id ASC
+      LIMIT $${issueWhere.params.length + 1}
     `,
-    [...mappedWhere.params, MAX_VISIBLE_ROWS]
+    [...issueWhere.params, UNMAPPED_PREVIEW_LIMIT]
   );
 
-  const safeRows: SampleMapRow[] = [];
-  const coordinateIssues: MapCoordinateIssue[] = [];
-  for (const row of mappedRows.rows) {
-    const assessment = assessCoordinate(row);
-    if (assessment.ok) {
-      safeRows.push(row);
-    } else {
-      coordinateIssues.push(issuePreview(row, assessment));
-    }
-  }
+  const mappedRows = await pool.query<CacheRow>(
+    `
+      SELECT ${cacheSelect}
+      FROM samples s
+      JOIN sample_map_cache sc ON sc.sample_id = s.id
+      LEFT JOIN group_map_cache gc ON gc.release_id = sc.release_id AND gc.group_site_key = sc.group_site_key
+      WHERE ${mappedWhere.text}
+      ORDER BY sc.group_id ASC NULLS LAST, sc.genetic_id ASC NULLS LAST, sc.sample_id ASC
+    `,
+    mappedWhere.params
+  );
 
-  let renderData: {
-    features: Array<Feature<Point, MapPointProperties>>;
-    leaderLines: Array<Feature<LineString, MapLineProperties>>;
-  };
-  if (presentation === "sample_cloud") {
-    renderData = buildSampleFeatures(safeRows, colorBy);
-  } else if (presentation === "group_locations") {
-    renderData = buildGroupFeatures(safeRows, colorBy);
-  } else {
-    renderData = buildSmartFeatures(safeRows, colorBy, bounds, viewport, zoom, combineNearbyGroups);
-  }
+  const cachedLegend = await loadLegend(release.id, colorConfig);
+  const legend = filteredLegend(cachedLegend, mappedRows.rows, colorConfig);
+  const renderData = presentation === "group_locations"
+    ? buildGroupFeatures(mappedRows.rows, colorConfig, legend, showGroupCounts)
+    : buildSampleFeatures(mappedRows.rows, colorConfig);
 
-  const laidOut = applyMapLayout(renderData.features, renderData.leaderLines, bounds, viewport);
-  const countRow = counts.rows[0] ?? { total_matched: 0, mapped_samples: 0, unmapped_samples: 0 };
+  const renderedSamples = presentation === "group_locations"
+    ? renderData.features.reduce((total, feature) => total + feature.properties.sampleCount, 0)
+    : renderData.features.length;
+  const renderedGroups = presentation === "group_locations"
+    ? renderData.features.length
+    : new Set(mappedRows.rows.map((row) => row.group_site_key || row.group_id || row.sample_id)).size;
+  const countRow = counts.rows[0] ?? { total_matched: 0, mapped_samples: 0, unmapped_samples: 0, coordinate_issues: 0 };
 
   return {
     release,
-    features: collection(laidOut.features),
-    leaderLines: collection(laidOut.leaderLines),
+    features: collection(renderData.features),
+    leaderLines: collection(renderData.leaderLines),
+    legend,
     summary: {
       totalMatched: countRow.total_matched ?? 0,
       mappedSamples: countRow.mapped_samples ?? 0,
-      visibleSamples: safeRows.length,
-      visibleFeatures: laidOut.features.length,
+      visibleSamples: renderedSamples,
+      visibleFeatures: renderData.features.length,
+      renderedSamples,
+      renderedGroups,
       unmappedSamples: countRow.unmapped_samples ?? 0,
-      coordinateIssues: coordinateIssues.length,
+      coordinateIssues: countRow.coordinate_issues ?? 0,
       presentation
     },
     unmappedSamples: {
@@ -809,8 +811,8 @@ export async function runMapQuery(request: MapQueryRequest): Promise<MapQueryRes
       samples: missingRows.rows.map(unmappedPreview)
     },
     coordinateIssues: {
-      total: coordinateIssues.length,
-      samples: coordinateIssues.slice(0, UNMAPPED_PREVIEW_LIMIT)
+      total: countRow.coordinate_issues ?? 0,
+      samples: issueRows.rows.map(issuePreview)
     }
   };
 }

@@ -10,11 +10,12 @@ import { DataTable } from "./DataTable";
 import { FilterBuilder } from "./FilterBuilder";
 import {
   MapView,
-  mapBaseStyles,
-  mapColorOptions,
-  mapPresentationOptions,
+  mapFixedColorOptions,
+  mapGradientOptions,
   type MapBaseStyle,
   type MapColorBy,
+  type MapColorMode,
+  type MapGradientBy,
   type MapPresentation,
   type MapProjectionMode
 } from "./MapView";
@@ -147,9 +148,13 @@ export function Explorer() {
   const [periodOptions, setPeriodOptions] = useState<PeriodOption[]>(defaultPeriodOptions);
   const [periodOptionsHydrated, setPeriodOptionsHydrated] = useState(false);
   const [mapBaseStyle, setMapBaseStyle] = useState<MapBaseStyle>("light");
+  const [mapColorMode, setMapColorMode] = useState<MapColorMode>("fixed");
   const [mapColorBy, setMapColorBy] = useState<MapColorBy>("sex");
-  const [mapPresentation, setMapPresentation] = useState<MapPresentation>("smart_split");
-  const [mapCombineNearbyGroups, setMapCombineNearbyGroups] = useState(true);
+  const [mapGradientBy, setMapGradientBy] = useState<MapGradientBy>("snp_1240k");
+  const [mapPresentation, setMapPresentation] = useState<MapPresentation>("sample_cloud");
+  const [mapShowGroupCounts, setMapShowGroupCounts] = useState(true);
+  const [mapShowOutlierLinks, setMapShowOutlierLinks] = useState(true);
+  const [mapShowLegend, setMapShowLegend] = useState(true);
   const [mapProjectionMode, setMapProjectionMode] = useState<MapProjectionMode>("flat");
   const [mapTotal, setMapTotal] = useState(0);
   const [mapReview, setMapReview] = useState<MapReviewData | null>(null);
@@ -157,7 +162,7 @@ export function Explorer() {
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
   const [draggedProperty, setDraggedProperty] = useState<string | null>(null);
   const [propertyDropTarget, setPropertyDropTarget] = useState<{ id: string; position: "before" | "after" } | null>(null);
-  const mapQueryCacheRef = useRef(new Map<string, { rows: Record<string, unknown>[]; total: number; releaseName: string | null }>());
+  const tableQueryCacheRef = useRef(new Map<string, { rows: Record<string, unknown>[]; total: number; releaseName: string | null }>());
 
   useEffect(() => {
     async function loadSchema() {
@@ -213,46 +218,52 @@ export function Explorer() {
   const queryFilter = useMemo(() => combineWithTimeWindow(filter, debouncedTimeWindow), [filter, debouncedTimeWindow]);
 
   useEffect(() => {
-    const allowed = mapColorOptions.some((option) => option.id === mapColorBy);
+    const allowed = mapFixedColorOptions.some((option) => option.id === mapColorBy);
     if (!allowed) setMapColorBy("sex");
   }, [mapColorBy]);
 
   useEffect(() => {
+    const allowed = mapGradientOptions.some((option) => option.id === mapGradientBy);
+    if (!allowed) setMapGradientBy("snp_1240k");
+  }, [mapGradientBy]);
+
+  useEffect(() => {
     if (!schema || viewMode === "map") return;
+
+    const sort = sorting.map((entry) => ({ field: entry.id, direction: entry.desc ? "desc" : "asc" }));
+    const requestBody = {
+      entity,
+      view: viewMode,
+      filter: queryFilter,
+      globalSearch: debouncedSearch,
+      searchField,
+      sort,
+      page,
+      pageSize,
+      admixtureRunId,
+      mapBounds: null
+    };
+    const tableCacheKey = JSON.stringify(requestBody);
+    const cachedTableQuery = tableQueryCacheRef.current.get(tableCacheKey);
+    if (cachedTableQuery) {
+      setRows(cachedTableQuery.rows);
+      setTotal(cachedTableQuery.total);
+      setReleaseName(cachedTableQuery.releaseName);
+      setLoading(false);
+      setError(null);
+      return;
+    }
 
     const controller = new AbortController();
     async function run() {
       setLoading(true);
       setError(null);
       try {
-        const sort = viewMode === "map" ? [] : sorting.map((entry) => ({ field: entry.id, direction: entry.desc ? "desc" : "asc" }));
-        const mapCacheKey = viewMode === "map"
-          ? JSON.stringify({ entity, filter: queryFilter, globalSearch: debouncedSearch, searchField })
-          : null;
-        const cachedMapQuery = mapCacheKey ? mapQueryCacheRef.current.get(mapCacheKey) : null;
-        if (cachedMapQuery) {
-          setRows(cachedMapQuery.rows);
-          setTotal(cachedMapQuery.total);
-          setReleaseName(cachedMapQuery.releaseName);
-          return;
-        }
-
         const response = await fetch("/api/query", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
-          body: JSON.stringify({
-            entity,
-            view: viewMode,
-            filter: queryFilter,
-            globalSearch: debouncedSearch,
-            searchField,
-            sort,
-            page: viewMode === "map" ? 1 : page,
-            pageSize: viewMode === "map" ? 30000 : pageSize,
-            admixtureRunId,
-            mapBounds: null
-          })
+          body: JSON.stringify(requestBody)
         });
         const data = await response.json();
         if (!response.ok) {
@@ -264,12 +275,10 @@ export function Explorer() {
         setRows(nextRows);
         setTotal(nextTotal);
         setReleaseName(nextReleaseName);
-        if (mapCacheKey) {
-          mapQueryCacheRef.current.set(mapCacheKey, { rows: nextRows, total: nextTotal, releaseName: nextReleaseName });
-          if (mapQueryCacheRef.current.size > 6) {
-            const oldestKey = mapQueryCacheRef.current.keys().next().value;
-            if (oldestKey) mapQueryCacheRef.current.delete(oldestKey);
-          }
+        tableQueryCacheRef.current.set(tableCacheKey, { rows: nextRows, total: nextTotal, releaseName: nextReleaseName });
+        if (tableQueryCacheRef.current.size > 20) {
+          const oldestKey = tableQueryCacheRef.current.keys().next().value;
+          if (oldestKey) tableQueryCacheRef.current.delete(oldestKey);
         }
       } catch (queryError) {
         if (queryError instanceof DOMException && queryError.name === "AbortError") return;
@@ -370,30 +379,6 @@ export function Explorer() {
             <span className="brand-title">ArchaeoBase</span>
             <span className="brand-meta">{releaseName ?? "AADR"}</span>
           </div>
-          <div className="segmented topbar-segmented" aria-label="Granularity">
-            <button
-              type="button"
-              className={entity === "sample" ? "active" : ""}
-              onClick={() => {
-                setEntity("sample");
-                setSorting([]);
-                setPage(1);
-              }}
-            >
-              Samples
-            </button>
-            <button
-              type="button"
-              className={entity === "group" ? "active" : ""}
-              onClick={() => {
-                setEntity("group");
-                setSorting([]);
-                setPage(1);
-              }}
-            >
-              Groups
-            </button>
-          </div>
           <div className="segmented topbar-segmented view-segmented" aria-label="View">
             <button
               type="button"
@@ -418,6 +403,51 @@ export function Explorer() {
               Map
             </button>
           </div>
+          {viewMode === "map" ? (
+            <div className="segmented topbar-segmented" aria-label="Marker level">
+              <button
+                type="button"
+                className={mapPresentation === "group_locations" ? "active" : ""}
+                onClick={() => setMapPresentation("group_locations")}
+                title="Show group-level markers"
+              >
+                Groups
+              </button>
+              <button
+                type="button"
+                className={mapPresentation === "sample_cloud" ? "active" : ""}
+                onClick={() => setMapPresentation("sample_cloud")}
+                title="Show sample-level markers"
+              >
+                Samples
+              </button>
+            </div>
+          ) : (
+            <div className="segmented topbar-segmented" aria-label="Granularity">
+              <button
+                type="button"
+                className={entity === "sample" ? "active" : ""}
+                onClick={() => {
+                  setEntity("sample");
+                  setSorting([]);
+                  setPage(1);
+                }}
+              >
+                Samples
+              </button>
+              <button
+                type="button"
+                className={entity === "group" ? "active" : ""}
+                onClick={() => {
+                  setEntity("group");
+                  setSorting([]);
+                  setPage(1);
+                }}
+              >
+                Groups
+              </button>
+            </div>
+          )}
         </div>
         <div className="topbar-meta">
           {mapIssueCount > 0 ? (
@@ -533,7 +563,7 @@ export function Explorer() {
           <input
             className="input"
             value={globalSearch}
-            placeholder="Search"
+            placeholder="Search or /regex/"
             onChange={(event) => {
               setGlobalSearch(event.target.value);
               setPage(1);
@@ -703,73 +733,90 @@ export function Explorer() {
               {viewMode === "map" ? (
                 <div className="settings-stack">
                   <div className="settings-block">
-                    <span className="settings-title">Base Map</span>
-                    <div className="map-style-options">
-                      {mapBaseStyles.map((style) => (
+                    <span className="settings-title">Marker Styling</span>
+                    <div className="settings-row">
+                      <span>Color scale</span>
+                      <div className="settings-segmented compact">
                         <button
-                          key={style.id}
-                          className={mapBaseStyle === style.id ? "active" : ""}
+                          className={mapColorMode === "fixed" ? "active" : ""}
                           type="button"
-                          onClick={() => setMapBaseStyle(style.id)}
+                          onClick={() => setMapColorMode("fixed")}
                         >
-                          <i style={{ background: style.swatch }} />
-                          <span>{style.label}</span>
-                          <b>{mapBaseStyle === style.id ? "✓" : ""}</b>
+                          Categorical
                         </button>
-                      ))}
-                    </div>
-                  </div>
-                  <label className="settings-row">
-                    <span>Dot Color</span>
-                    <select className="select" value={mapColorBy} onChange={(event) => setMapColorBy(event.target.value as MapColorBy)}>
-                      {mapColorOptions.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="settings-row">
-                    <span>Map Detail</span>
-                    <div className="settings-segmented">
-                      {mapPresentationOptions.map((option) => (
                         <button
-                          key={option.id}
-                          className={mapPresentation === option.id ? "active" : ""}
+                          className={mapColorMode === "gradient" ? "active" : ""}
                           type="button"
-                          onClick={() => setMapPresentation(option.id)}
+                          onClick={() => setMapColorMode("gradient")}
                         >
-                          {option.label}
+                          Gradient
                         </button>
-                      ))}
+                      </div>
                     </div>
+                    {mapColorMode === "fixed" ? (
+                      <label className="settings-row">
+                        <span>Field</span>
+                        <select className="select" value={mapColorBy} onChange={(event) => setMapColorBy(event.target.value as MapColorBy)}>
+                          {mapFixedColorOptions.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <label className="settings-row">
+                        <span>Field</span>
+                        <select className="select" value={mapGradientBy} onChange={(event) => setMapGradientBy(event.target.value as MapGradientBy)}>
+                          {mapGradientOptions.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                   </div>
-                  <label className={`settings-row ${mapPresentation !== "smart_split" ? "disabled" : ""}`}>
-                    <span>Combine nearby groups</span>
-                    <input
-                      type="checkbox"
-                      checked={mapCombineNearbyGroups}
-                      disabled={mapPresentation !== "smart_split"}
-                      onChange={(event) => setMapCombineNearbyGroups(event.target.checked)}
-                    />
-                  </label>
-                  <div className="settings-row">
-                    <span>Projection</span>
-                    <div className="settings-segmented compact">
-                      <button
-                        className={mapProjectionMode === "flat" ? "active" : ""}
-                        type="button"
-                        onClick={() => setMapProjectionMode("flat")}
-                      >
-                        Flat
-                      </button>
-                      <button
-                        className={mapProjectionMode === "globe" ? "active" : ""}
-                        type="button"
-                        onClick={() => setMapProjectionMode("globe")}
-                      >
-                        Globe
-                      </button>
+                  <div className="settings-block">
+                    <span className="settings-title">Display</span>
+                    <label className={`settings-row ${mapPresentation !== "group_locations" ? "disabled" : ""}`}>
+                      <span>Group count labels</span>
+                      <input
+                        type="checkbox"
+                        checked={mapShowGroupCounts}
+                        disabled={mapPresentation !== "group_locations"}
+                        onChange={(event) => setMapShowGroupCounts(event.target.checked)}
+                      />
+                    </label>
+                    <label className="settings-row">
+                      <span>Outlier links</span>
+                      <input type="checkbox" checked={mapShowOutlierLinks} onChange={(event) => setMapShowOutlierLinks(event.target.checked)} />
+                    </label>
+                    <label className="settings-row">
+                      <span>Legend</span>
+                      <input type="checkbox" checked={mapShowLegend} onChange={(event) => setMapShowLegend(event.target.checked)} />
+                    </label>
+                  </div>
+                  <div className="settings-block">
+                    <span className="settings-title">Map Geometry</span>
+                    <div className="settings-row">
+                      <span>Projection</span>
+                      <div className="settings-segmented compact">
+                        <button
+                          className={mapProjectionMode === "flat" ? "active" : ""}
+                          type="button"
+                          onClick={() => setMapProjectionMode("flat")}
+                        >
+                          Flat
+                        </button>
+                        <button
+                          className={mapProjectionMode === "globe" ? "active" : ""}
+                          type="button"
+                          onClick={() => setMapProjectionMode("globe")}
+                        >
+                          Globe
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -889,9 +936,15 @@ export function Explorer() {
                   globalSearch={debouncedSearch}
                   searchField={searchField}
                   baseStyle={mapBaseStyle}
+                  onBaseStyleChange={setMapBaseStyle}
+                  colorMode={mapColorMode}
                   colorBy={mapColorBy}
+                  gradientBy={mapGradientBy}
                   presentation={mapPresentation}
-                  combineNearbyGroups={mapCombineNearbyGroups}
+                  combineNearbyGroups={false}
+                  showGroupCounts={mapShowGroupCounts}
+                  showOutlierLinks={mapShowOutlierLinks}
+                  showLegend={mapShowLegend}
                   projectionMode={mapProjectionMode}
                   onSummaryChange={handleMapSummaryChange}
                   onReviewChange={handleMapReviewChange}

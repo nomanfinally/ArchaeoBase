@@ -146,6 +146,16 @@ export function compileGlobalSearch(query: string | undefined, searchField?: str
 
   if (!searchable.length) return EMPTY_FILTER;
 
+  const regexMatch = trimmed.match(/^\/(.+)\/$/);
+  const regexSearch = trimmed.startsWith("re:") ? trimmed.slice(3).trim() : regexMatch?.[1];
+  if (regexSearch) {
+    const param = "$1";
+    return {
+      text: `(${searchable.map((field) => `coalesce(${field.sampleColumn}::text, '') ~* ${param}`).join(" OR ")})`,
+      params: [regexSearch]
+    };
+  }
+
   const param = "$1";
   return {
     text: `(${searchable.map((field) => `coalesce(${field.sampleColumn}::text, '') ILIKE ${param}`).join(" OR ")})`,

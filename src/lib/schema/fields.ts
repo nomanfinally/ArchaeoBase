@@ -47,58 +47,46 @@ function sampleField(
   };
 }
 
+const PERIOD_SAMPLE_COLUMN = `CASE
+  WHEN s.date_mean_bp IS NULL THEN NULL
+  WHEN 1950 - s.date_mean_bp < -10000 THEN 'Paleolithic'
+  WHEN 1950 - s.date_mean_bp < -8000 THEN 'Mesolithic'
+  WHEN 1950 - s.date_mean_bp < -4500 THEN 'Neolithic'
+  WHEN 1950 - s.date_mean_bp < -3300 THEN 'Chalcolithic'
+  WHEN 1950 - s.date_mean_bp < -1200 THEN 'Bronze Age'
+  WHEN 1950 - s.date_mean_bp < -500 THEN 'Iron Age'
+  WHEN 1950 - s.date_mean_bp < 500 THEN 'Classical'
+  WHEN 1950 - s.date_mean_bp < 1500 THEN 'Medieval'
+  ELSE 'Modern'
+END`;
+
 export const sampleFields = [
   sampleField("genetic_id", "Genetic ID", "text", { defaultVisible: true }),
-  sampleField("persistent_genetic_id", "Persistent Genetic ID", "text"),
-  sampleField("individual_id", "Individual ID", "text"),
-  sampleField("skeletal_code", "Skeletal Code", "text"),
-  sampleField("skeletal_element", "Skeletal Element", "text"),
-  sampleField("first_publication", "First Publication", "text"),
-  sampleField("publication", "Publication", "text"),
-  sampleField("doi", "DOI", "text"),
-  sampleField("repository", "Repository", "text"),
-  sampleField("date_method", "Date Method", "text"),
   sampleField("date_mean_bp", "Date BP", "number", { defaultVisible: true }),
   sampleField("date_sd_bp", "Date SD BP", "number"),
   sampleField("date_mean_year_ce", "Year CE", "year", { defaultVisible: true }),
-  sampleField("full_date", "Full Date", "text", { sortable: false }),
-  sampleField("age_morphological", "Age / Morphological Sex", "text"),
   sampleField("group_id", "Group ID", "text", { defaultVisible: true }),
-  sampleField("locality", "Locality", "text", { defaultVisible: true }),
+  sampleField("y_hap_isogg", "Y Haplogroup ISOGG", "text", { defaultVisible: true }),
+  sampleField("mtdna_haplogroup", "mtDNA Haplogroup", "text", { defaultVisible: true }),
   sampleField("political_entity", "Political Entity", "enum", { defaultVisible: true }),
+  sampleField("locality", "Locality", "text", { defaultVisible: true }),
+  sampleField("suffixes", "Suffices", "enum", { defaultVisible: true }),
+  sampleField("snp_1240k", "SNPs 1240k", "number", { defaultVisible: true }),
+  sampleField("snp_2m", "SNPs 2M", "number"),
+  sampleField("molecular_sex", "Molecular Sex", "enum", { defaultVisible: true }),
+  sampleField("publication", "Publication", "text"),
+  sampleField("doi", "DOI", "text"),
   sampleField("latitude", "Latitude", "number"),
   sampleField("longitude", "Longitude", "number"),
-  sampleField("has_coordinates", "Has Coordinates", "boolean"),
-  sampleField("pulldown_strategy", "Pulldown Strategy", "text"),
-  sampleField("suffixes", "Suffices", "enum", { defaultVisible: true }),
-  sampleField("data_type", "Data Type", "enum", { defaultVisible: true }),
-  sampleField("no_libraries", "No. Libraries", "number"),
-  sampleField("coverage_1150k", "Coverage 1.15M", "number"),
-  sampleField("coverage_non_targeted", "Coverage Non-targeted", "number"),
-  sampleField("snp_2m", "SNPs 2M", "number"),
-  sampleField("snp_1240k", "SNPs 1240k", "number", { defaultVisible: true }),
-  sampleField("snp_ho", "SNPs HO", "number"),
-  sampleField("snp_compatibility", "SNPs Compatibility", "number"),
-  sampleField("snp_compatibility_ho", "SNPs Compatibility HO", "number"),
-  sampleField("molecular_sex", "Molecular Sex", "enum", { defaultVisible: true }),
-  sampleField("family_relations", "Family Relations", "text"),
-  sampleField("roh_total_20cm_a", "ROH >20cM A", "number"),
-  sampleField("roh_total_20cm_b", "ROH >20cM B", "number"),
-  sampleField("y_hap_terminal", "Y Haplogroup Terminal", "text", { defaultVisible: true }),
-  sampleField("y_hap_isogg", "Y Haplogroup ISOGG", "text", { defaultVisible: true }),
-  sampleField("y_hap_manual", "Y Haplogroup Manual", "text"),
-  sampleField("mtdna_coverage", "mtDNA Coverage", "number"),
-  sampleField("mtdna_haplogroup", "mtDNA Haplogroup", "text", { defaultVisible: true }),
-  sampleField("mtdna_match_consensus", "mtDNA Match Consensus", "text"),
-  sampleField("damage_rate", "Damage Rate", "number"),
-  sampleField("sex_ratio", "Sex Ratio", "number"),
-  sampleField("angsd_mom_ci", "ANGSD MOM CI", "text"),
-  sampleField("hapconx_ci", "hapConX CI", "text"),
-  sampleField("library_type", "Library Type", "text"),
-  sampleField("libraries", "Libraries", "text", { sortable: false }),
-  sampleField("endogenous_by_library", "Endogenous by Library", "text", { sortable: false }),
-  sampleField("assessment", "Assessment", "enum", { defaultVisible: true }),
-  sampleField("assessment_warnings", "Assessment Warnings", "text", { sortable: false })
+  {
+    id: "period",
+    label: "Period",
+    kind: "enum",
+    sampleColumn: PERIOD_SAMPLE_COLUMN,
+    defaultVisible: true,
+    filterable: true,
+    sortable: true
+  }
 ] satisfies FieldDefinition[];
 
 export const groupFields = [
@@ -159,14 +147,6 @@ export const groupFields = [
     sortable: true
   },
   {
-    id: "is_multi_site",
-    label: "Multi-site",
-    kind: "boolean",
-    groupColumn: "g.is_multi_site",
-    defaultVisible: true,
-    sortable: true
-  },
-  {
     id: "publications",
     label: "Publications",
     kind: "text",
@@ -183,27 +163,11 @@ export const groupFields = [
     sortable: true
   },
   {
-    id: "y_hap_terminal_list",
-    label: "Y Haplogroups Terminal",
-    kind: "text",
-    groupColumn: "g.y_hap_terminal_list",
-    defaultVisible: false,
-    sortable: true
-  },
-  {
     id: "mtdna_haplogroups",
     label: "mtDNA Haplogroups",
     kind: "text",
     groupColumn: "g.mtdna_haplogroups",
     defaultVisible: true,
-    sortable: true
-  },
-  {
-    id: "assessments",
-    label: "Assessments",
-    kind: "text",
-    groupColumn: "g.assessments",
-    defaultVisible: false,
     sortable: true
   },
   {
@@ -251,14 +215,6 @@ export const groupFields = [
     label: "Avg SNPs 2M",
     kind: "number",
     groupColumn: "g.snp_2m_avg",
-    defaultVisible: false,
-    sortable: true
-  },
-  {
-    id: "coverage_1150k_avg",
-    label: "Avg Coverage 1.15M",
-    kind: "number",
-    groupColumn: "g.coverage_1150k_avg",
     defaultVisible: false,
     sortable: true
   }

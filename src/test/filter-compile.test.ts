@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compileSampleFilter, mergeWhere } from "@/lib/filters/compile";
+import { compileGlobalSearch, compileSampleFilter, mergeWhere } from "@/lib/filters/compile";
 import type { FilterNode } from "@/lib/filters/types";
 
 describe("filter compiler", () => {
@@ -38,11 +38,18 @@ describe("filter compiler", () => {
     const compiled = compileSampleFilter({
       type: "group",
       op: "not",
-      children: [{ type: "condition", field: "assessment", operator: "equals", value: "CRITICAL" }]
+      children: [{ type: "condition", field: "molecular_sex", operator: "equals", value: "Unknown" }]
     });
 
     expect(compiled.text).toContain("NOT");
-    expect(compiled.params).toEqual(["CRITICAL"]);
+    expect(compiled.params).toEqual(["Unknown"]);
+  });
+
+  it("compiles slash-delimited global regex search", () => {
+    const compiled = compileGlobalSearch("/Cuba_.*AG/", "group_id");
+    expect(compiled.text).toContain("~* $1");
+    expect(compiled.text).toContain("s.group_id");
+    expect(compiled.params).toEqual(["Cuba_.*AG"]);
   });
 
   it("renumbers merged fragments", () => {

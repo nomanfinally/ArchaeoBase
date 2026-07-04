@@ -1,46 +1,42 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Feature, FeatureCollection, LineString, Point } from "geojson";
 import type { GeoJSONSource, Map as MapLibreMap, MapMouseEvent, Popup, StyleSpecification } from "maplibre-gl";
-import type { FilterNode, MapBounds } from "@/lib/filters/types";
+import type { FilterNode } from "@/lib/filters/types";
 import type {
   MapColorBy,
+  MapColorMode,
+  MapGradientBy,
+  MapLegend,
   MapLineProperties,
   MapPointProperties,
   MapPresentation,
   MapQueryResponse,
-  MapQuerySummary,
-  MapViewport
+  MapQuerySummary
 } from "@/lib/map/types";
 
 export type MapBaseStyle = "dark" | "light" | "streets" | "satellite";
 export type MapProjectionMode = "flat" | "globe";
-export type { MapColorBy, MapPresentation };
+export type { MapColorBy, MapColorMode, MapGradientBy, MapPresentation };
 
 type Props = {
   filter: FilterNode;
   globalSearch: string;
   searchField: string | null;
   baseStyle: MapBaseStyle;
+  onBaseStyleChange: (style: MapBaseStyle) => void;
+  colorMode: MapColorMode;
   colorBy: MapColorBy;
+  gradientBy: MapGradientBy;
   presentation: MapPresentation;
   combineNearbyGroups: boolean;
+  showGroupCounts: boolean;
+  showOutlierLinks: boolean;
+  showLegend: boolean;
   projectionMode: MapProjectionMode;
   onSummaryChange: (summary: MapQuerySummary, release: MapQueryResponse["release"]) => void;
-  onReviewChange: (review: Pick<MapQueryResponse, "unmappedSamples" | "coordinateIssues">) => void;
-};
-
-type LegendItem = {
-  label: string;
-  color: string;
-  count: number;
-};
-
-type ViewState = {
-  bounds: MapBounds;
-  zoom: number;
-  viewport: MapViewport;
+  onReviewChange?: (review: Pick<MapQueryResponse, "unmappedSamples" | "coordinateIssues">) => void;
 };
 
 const POINT_SOURCE_ID = "archaebase-map-points";
@@ -59,6 +55,9 @@ const ESRI_BASE_URL = "https://server.arcgisonline.com/ArcGIS/rest/services";
 
 const emptyPointCollection: FeatureCollection<Point, MapPointProperties> = { type: "FeatureCollection", features: [] };
 const emptyLineCollection: FeatureCollection<LineString, MapLineProperties> = { type: "FeatureCollection", features: [] };
+const mapResponseCache = new Map<string, MapQueryResponse>();
+const MAP_MIN_ZOOM = 1;
+const MAP_MAX_ZOOM = 22;
 
 export const mapBaseStyles: { id: MapBaseStyle; label: string; swatch: string }[] = [
   { id: "dark", label: "Dark", swatch: "#111217" },
@@ -67,21 +66,18 @@ export const mapBaseStyles: { id: MapBaseStyle; label: string; swatch: string }[
   { id: "satellite", label: "Satellite", swatch: "#3e4a59" }
 ];
 
-export const mapColorOptions: { id: MapColorBy; label: string }[] = [
-  { id: "default", label: "Single color" },
+export const mapFixedColorOptions: { id: MapColorBy; label: string }[] = [
+  { id: "single", label: "Single color" },
   { id: "sex", label: "Molecular sex" },
-  { id: "period", label: "Period" },
-  { id: "country", label: "Political entity" },
-  { id: "data_type", label: "Data type" },
-  { id: "assessment", label: "Assessment" },
-  { id: "sample_count", label: "Sample count" },
-  { id: "multi_site", label: "Site spread" }
+  { id: "y_haplogroup_initial", label: "Y-DNA first letter" },
+  { id: "mtdna_initial", label: "mtDNA first letter" },
+  { id: "period", label: "Period" }
 ];
 
-export const mapPresentationOptions: { id: MapPresentation; label: string }[] = [
-  { id: "smart_split", label: "Smart Split" },
-  { id: "group_locations", label: "Group Locations" },
-  { id: "sample_cloud", label: "Sample Cloud" }
+export const mapGradientOptions: { id: MapGradientBy; label: string }[] = [
+  { id: "snp_1240k", label: "SNPs 1240k" },
+  { id: "snp_2m", label: "SNPs 2M" },
+  { id: "date_mean_bp", label: "Age BP" }
 ];
 
 function esriTileUrl(service: string) {
@@ -93,11 +89,16 @@ function rasterSource(service: string, attribution = "Tiles © Esri") {
     type: "raster" as const,
     tiles: [esriTileUrl(service)],
     tileSize: 256,
+    maxzoom: 19,
     attribution
   };
 }
 
-function mapStyleDefinition(baseStyle: MapBaseStyle): StyleSpecification {
+function projectionType(projectionMode: MapProjectionMode) {
+  return projectionMode === "globe" ? "globe" : "mercator";
+}
+
+function mapStyleDefinition(baseStyle: MapBaseStyle, projectionMode: MapProjectionMode = "flat"): StyleSpecification {
   const styles: Record<MapBaseStyle, { sources: StyleSpecification["sources"]; layers: StyleSpecification["layers"] }> = {
     light: {
       sources: {
@@ -145,15 +146,16 @@ function mapStyleDefinition(baseStyle: MapBaseStyle): StyleSpecification {
   return {
     version: 8,
     glyphs: OPENFREEMAP_GLYPHS,
+    projection: { type: projectionType(projectionMode) },
     sources: selected.sources,
     layers: selected.layers
   };
 }
 
 function boundaryColors(baseStyle: MapBaseStyle) {
-  if (baseStyle === "dark") return { country: "#d7dde3", region: "#77838d", label: "#f4f4f2", halo: "#121417", opacity: 0.92 };
+  if (baseStyle === "dark") return { country: "#ffffff", region: "#d1d5db", label: "#ffffff", halo: "#05070a", opacity: 0.98 };
   if (baseStyle === "satellite") return { country: "#ffffff", region: "#d3dde8", label: "#ffffff", halo: "#1f252c", opacity: 0.95 };
-  return { country: "#30372f", region: "#8a9287", label: "#2a3029", halo: "#f6f5f0", opacity: 0.86 };
+  return { country: "#111827", region: "#4b5563", label: "#111827", halo: "#ffffff", opacity: 0.94 };
 }
 
 function setLinePaint(map: MapLibreMap, layerId: string, baseStyle: MapBaseStyle, kind: "country" | "region") {
@@ -304,11 +306,11 @@ function ensureMapLayers(
           ["==", ["get", "kind"], "aggregate"],
           ["step", ["get", "sampleCount"], 16, 25, 19, 100, 23, 300, 27],
           ["==", ["get", "kind"], "group"],
-          ["interpolate", ["linear"], ["get", "sampleCount"], 1, 6, 10, 8, 50, 11, 200, 14],
-          4
+          6.6,
+          5.6
         ],
-        "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": ["case", ["==", ["get", "kind"], "sample"], 0.4, 0.9],
+        "circle-stroke-color": ["case", ["==", ["get", "isUnknownColor"], true], "#ffffff", "#ffffff"],
+        "circle-stroke-width": ["case", ["==", ["get", "isUnknownColor"], true], 1.35, ["==", ["get", "kind"], "sample"], 0.5, 0.65],
         "circle-opacity": ["case", ["==", ["get", "kind"], "sample"], 0.86, 0.92]
       }
     });
@@ -337,7 +339,9 @@ function ensureMapLayers(
 }
 
 function applyProjection(map: MapLibreMap, projectionMode: MapProjectionMode) {
-  map.setProjection({ type: projectionMode === "globe" ? "globe" : "mercator" });
+  map.setProjection({ type: projectionType(projectionMode) });
+  map.resize();
+  map.triggerRepaint();
 }
 
 function escapeHtml(value: string) {
@@ -372,58 +376,59 @@ function popupHtml(properties: MapPointProperties) {
   `;
 }
 
-function useDebouncedValue<T>(value: T, delayMs: number) {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const timeout = window.setTimeout(() => setDebounced(value), delayMs);
-    return () => window.clearTimeout(timeout);
-  }, [value, delayMs]);
-  return debounced;
-}
-
-function buildLegend(collection: FeatureCollection<Point, MapPointProperties>) {
-  const groups = new Map<string, LegendItem>();
-  for (const feature of collection.features) {
-    const label = feature.properties.colorLabel || "Unknown";
-    const current = groups.get(label);
-    if (current) {
-      current.count += 1;
-    } else {
-      groups.set(label, { label, color: feature.properties.markerColor, count: 1 });
-    }
+function popupRows(properties: MapPointProperties) {
+  try {
+    return JSON.parse(properties.popupRows || "[]") as Array<[string, string]>;
+  } catch {
+    return [];
   }
-  return Array.from(groups.values()).sort((a, b) => b.count - a.count).slice(0, 9);
 }
 
-function readViewState(map: MapLibreMap, container: HTMLDivElement | null): ViewState {
-  const bounds = map.getBounds();
-  const rect = container?.getBoundingClientRect();
+function hoverPopupHtml(properties: MapPointProperties) {
+  const rows = popupRows(properties);
+  const preferred = properties.kind === "sample"
+    ? ["Sample", "Date", "Sex", "Y-DNA", "mtDNA", "SNPs 1240k"]
+    : ["Samples", "Date span", "Countries", "Localities", "Y-DNA", "mtDNA", "Avg SNPs 1240k"];
+  const facts = preferred
+    .map((label) => rows.find(([rowLabel]) => rowLabel === label))
+    .filter((row): row is [string, string] => Boolean(row))
+    .slice(0, properties.kind === "sample" ? 6 : 7);
+  const summary =
+    properties.kind === "aggregate"
+      ? `${properties.groupCount.toLocaleString("en-US")} groups, ${properties.sampleCount.toLocaleString("en-US")} samples`
+      : properties.kind === "group"
+        ? `${properties.sampleCount.toLocaleString("en-US")} samples`
+        : properties.groupId
+          ? `Group ${properties.groupId}`
+          : "Sample";
+  const title = properties.kind === "sample" && properties.groupId ? properties.groupId : properties.title;
+
+  return `
+    <div class="map-popup map-popup-compact">
+      <strong class="map-popup-title">${escapeHtml(title)}</strong>
+      ${properties.subtitle ? `<span class="map-popup-subtitle">${escapeHtml(properties.subtitle)}</span>` : ""}
+      <span class="map-popup-summary">${escapeHtml(summary)}</span>
+      ${facts.length ? `<dl class="map-popup-facts map-popup-hover-facts">${facts.map(([label, value]) => `
+        <div>
+          <dt>${escapeHtml(label)}</dt>
+          <dd>${escapeHtml(value)}</dd>
+        </div>
+      `).join("")}</dl>` : ""}
+    </div>
+  `;
+}
+
+function visibleLineCollection(lines: FeatureCollection<LineString, MapLineProperties> | undefined, showOutlierLinks: boolean) {
+  if (!lines) return emptyLineCollection;
+  if (showOutlierLinks) return lines;
   return {
-    bounds: {
-      west: bounds.getWest(),
-      south: bounds.getSouth(),
-      east: bounds.getEast(),
-      north: bounds.getNorth()
-    },
-    zoom: map.getZoom(),
-    viewport: {
-      width: Math.round(rect?.width || map.getContainer().clientWidth || 1280),
-      height: Math.round(rect?.height || map.getContainer().clientHeight || 720)
-    }
+    ...lines,
+    features: lines.features.filter((feature) => feature.properties.kind !== "outlier")
   };
 }
 
-function queryKey(state: ViewState | null) {
-  if (!state) return "";
-  return [
-    state.zoom.toFixed(2),
-    state.viewport.width,
-    state.viewport.height,
-    state.bounds.west.toFixed(3),
-    state.bounds.south.toFixed(3),
-    state.bounds.east.toFixed(3),
-    state.bounds.north.toFixed(3)
-  ].join(":");
+function zoomPercent(map: MapLibreMap) {
+  return Math.round(((map.getZoom() - MAP_MIN_ZOOM) / (MAP_MAX_ZOOM - MAP_MIN_ZOOM)) * 100);
 }
 
 export function MapView({
@@ -431,29 +436,34 @@ export function MapView({
   globalSearch,
   searchField,
   baseStyle,
+  onBaseStyleChange,
   colorBy,
+  colorMode,
+  gradientBy,
   presentation,
   combineNearbyGroups,
+  showGroupCounts,
+  showOutlierLinks,
+  showLegend,
   projectionMode,
   onSummaryChange,
-  onReviewChange
+  onReviewChange = () => undefined
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const popupRef = useRef<Popup | null>(null);
   const hoverKeyRef = useRef<string>("");
+  const pinnedMarkerRef = useRef<string>("");
   const pointsRef = useRef<FeatureCollection<Point, MapPointProperties>>(emptyPointCollection);
   const linesRef = useRef<FeatureCollection<LineString, MapLineProperties>>(emptyLineCollection);
   const baseStyleRef = useRef(baseStyle);
   const projectionModeRef = useRef(projectionMode);
   const [mapError, setMapError] = useState<string | null>(null);
-  const [viewState, setViewState] = useState<ViewState | null>(null);
+  const [mapReady, setMapReady] = useState(false);
   const [queryLoading, setQueryLoading] = useState(false);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [mapData, setMapData] = useState<MapQueryResponse | null>(null);
-
-  const debouncedViewState = useDebouncedValue(viewState, 140);
-  const legendItems = useMemo(() => buildLegend(mapData?.features ?? emptyPointCollection), [mapData]);
+  const [currentZoomPercent, setCurrentZoomPercent] = useState(0);
 
   function syncSources(map = mapRef.current) {
     if (!map || !map.isStyleLoaded()) return;
@@ -466,7 +476,7 @@ export function MapView({
 
   useEffect(() => {
     pointsRef.current = mapData?.features ?? emptyPointCollection;
-    linesRef.current = mapData?.leaderLines ?? emptyLineCollection;
+    linesRef.current = visibleLineCollection(mapData?.leaderLines, showOutlierLinks);
     const map = mapRef.current;
     if (!map) return;
     if (map.isStyleLoaded()) {
@@ -474,13 +484,13 @@ export function MapView({
       return;
     }
     map.once("idle", () => syncSources(map));
-  }, [mapData]);
+  }, [mapData, showOutlierLinks]);
 
   useEffect(() => {
     baseStyleRef.current = baseStyle;
     const map = mapRef.current;
     if (!map) return;
-    map.setStyle(mapStyleDefinition(baseStyle));
+    map.setStyle(mapStyleDefinition(baseStyle, projectionModeRef.current));
   }, [baseStyle]);
 
   useEffect(() => {
@@ -496,9 +506,6 @@ export function MapView({
       syncSources(map);
     };
     updateProjection();
-    if (projectionMode === "globe" && map.getZoom() > 5.2) {
-      map.easeTo({ zoom: 5.2, duration: 260 });
-    }
     return () => {
       map.off("idle", updateProjection);
     };
@@ -519,10 +526,10 @@ export function MapView({
           container: containerRef.current,
           center: [25, 28],
           zoom: 1.45,
-          minZoom: 1,
-          maxZoom: 10,
+          minZoom: MAP_MIN_ZOOM,
+          maxZoom: MAP_MAX_ZOOM,
           attributionControl: false,
-          style: mapStyleDefinition(baseStyleRef.current)
+          style: mapStyleDefinition(baseStyleRef.current, projectionModeRef.current)
         });
       } catch {
         setMapError("Map rendering requires WebGL. Enable hardware acceleration or use the table view.");
@@ -531,46 +538,62 @@ export function MapView({
 
       map.addControl(new maplibre.NavigationControl({ visualizePitch: false }), "top-right");
       map.addControl(new maplibre.AttributionControl({ compact: true }), "bottom-right");
-      popupRef.current = new maplibre.Popup({ closeButton: false, closeOnClick: true, offset: 14, maxWidth: "300px" });
+      popupRef.current = new maplibre.Popup({ closeButton: false, closeOnClick: false, offset: 14, maxWidth: "320px" });
       mapRef.current = map;
-
-      const emitViewState = () => {
-        if (disposed || !containerRef.current) return;
-        setViewState(readViewState(map, containerRef.current));
-      };
 
       map.on("load", () => {
         applyProjection(map, projectionModeRef.current);
         syncSources(map);
-        emitViewState();
+        setCurrentZoomPercent(zoomPercent(map));
+        setMapReady(true);
       });
       map.on("style.load", () => {
         applyProjection(map, projectionModeRef.current);
         syncSources(map);
       });
       map.on("idle", () => syncSources(map));
-      map.on("moveend", emitViewState);
-      map.on("zoomend", emitViewState);
 
       resizeObserver = new ResizeObserver(() => {
         map.resize();
-        emitViewState();
       });
       resizeObserver.observe(containerRef.current);
+
+      const updateZoom = () => {
+        setCurrentZoomPercent(zoomPercent(map));
+      };
+      map.on("zoom", updateZoom);
+      map.on("zoomend", updateZoom);
 
       const hidePopup = () => {
         map.getCanvas().style.cursor = "";
         hoverKeyRef.current = "";
+        if (pinnedMarkerRef.current) return;
         popupRef.current?.remove();
       };
 
-      const showPopup = (feature: Feature<Point, MapPointProperties>, event: MapMouseEvent) => {
+      const showHoverPopup = (feature: Feature<Point, MapPointProperties>, event: MapMouseEvent) => {
+        if (pinnedMarkerRef.current) return;
         const coordinates = feature.geometry.coordinates as [number, number];
         const key = `${feature.properties.markerId}:${coordinates[0].toFixed(5)}:${coordinates[1].toFixed(5)}`;
         if (hoverKeyRef.current === key) return;
         hoverKeyRef.current = key;
         map.getCanvas().style.cursor = "pointer";
-        popupRef.current?.setLngLat(coordinates ?? [event.lngLat.lng, event.lngLat.lat]).setHTML(popupHtml(feature.properties)).addTo(map);
+        popupRef.current?.setLngLat(coordinates ?? [event.lngLat.lng, event.lngLat.lat]).setHTML(hoverPopupHtml(feature.properties)).addTo(map);
+      };
+
+      const showPinnedPopup = (feature: Feature<Point, MapPointProperties>) => {
+        const coordinates = feature.geometry.coordinates as [number, number];
+        pinnedMarkerRef.current = feature.properties.markerId;
+        hoverKeyRef.current = "";
+        map.getCanvas().style.cursor = "pointer";
+        popupRef.current?.setLngLat(coordinates).setHTML(popupHtml(feature.properties)).addTo(map);
+      };
+
+      const closePinnedPopup = () => {
+        pinnedMarkerRef.current = "";
+        hoverKeyRef.current = "";
+        map.getCanvas().style.cursor = "";
+        popupRef.current?.remove();
       };
 
       const handleHover = (event: MapMouseEvent) => {
@@ -584,17 +607,27 @@ export function MapView({
           hidePopup();
           return;
         }
-        showPopup(feature, event);
+        showHoverPopup(feature, event);
       };
 
       map.on("mousemove", handleHover);
       map.on("mouseleave", hidePopup);
       map.on("click", (event) => {
-        if (!map.getLayer(POINT_LAYER_ID)) return;
+        if (!map.getLayer(POINT_LAYER_ID)) {
+          closePinnedPopup();
+          return;
+        }
         const features = map.queryRenderedFeatures(event.point, { layers: [POINT_LAYER_ID] }) as unknown as Array<Feature<Point, MapPointProperties>>;
         const feature = features[0];
-        if (!feature || feature.properties.kind !== "aggregate") return;
-        map.easeTo({ center: event.lngLat, zoom: Math.min(map.getZoom() + 2, 10), duration: 260 });
+        if (!feature?.geometry || feature.geometry.type !== "Point") {
+          closePinnedPopup();
+          return;
+        }
+        if (pinnedMarkerRef.current === feature.properties.markerId) {
+          closePinnedPopup();
+          return;
+        }
+        showPinnedPopup(feature);
       });
     }
 
@@ -610,31 +643,45 @@ export function MapView({
   }, []);
 
   useEffect(() => {
-    if (!debouncedViewState) return;
-    const state = debouncedViewState;
+    if (!mapReady) return;
     const controller = new AbortController();
     async function run() {
       setQueryLoading(true);
       setQueryError(null);
       try {
+        const requestBody = {
+          filter,
+          globalSearch,
+          searchField,
+          presentation,
+          combineNearbyGroups: false,
+          colorMode,
+          colorBy,
+          gradientBy,
+          colorTheme: "dark",
+          showGroupCounts
+        };
+        const cacheKey = JSON.stringify(requestBody);
+        const cached = mapResponseCache.get(cacheKey);
+        if (cached) {
+          setMapData(cached);
+          onSummaryChange(cached.summary, cached.release);
+          onReviewChange({ unmappedSamples: cached.unmappedSamples, coordinateIssues: cached.coordinateIssues });
+          return;
+        }
         const response = await fetch("/api/map/query", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
-          body: JSON.stringify({
-            filter,
-            globalSearch,
-            searchField,
-            bounds: state.bounds,
-            zoom: state.zoom,
-            viewport: state.viewport,
-            presentation,
-            combineNearbyGroups: presentation === "smart_split" ? combineNearbyGroups : false,
-            colorBy
-          })
+          body: JSON.stringify(requestBody)
         });
         const data = (await response.json()) as MapQueryResponse & { error?: string };
         if (!response.ok) throw new Error(data.error ?? "Map query failed");
+        mapResponseCache.set(cacheKey, data);
+        if (mapResponseCache.size > 12) {
+          const oldestKey = mapResponseCache.keys().next().value;
+          if (oldestKey) mapResponseCache.delete(oldestKey);
+        }
         setMapData(data);
         onSummaryChange(data.summary, data.release);
         onReviewChange({ unmappedSamples: data.unmappedSamples, coordinateIssues: data.coordinateIssues });
@@ -648,14 +695,15 @@ export function MapView({
 
     void run();
     return () => controller.abort();
-  }, [filter, globalSearch, searchField, debouncedViewState, presentation, combineNearbyGroups, colorBy, onSummaryChange, onReviewChange]);
+  }, [filter, globalSearch, searchField, mapReady, presentation, combineNearbyGroups, colorBy, colorMode, gradientBy, showGroupCounts, onSummaryChange, onReviewChange]);
 
   const mapStatus = mapData?.summary;
   const pointCount = mapData?.features.features.length ?? 0;
-  const activeQueryKey = queryKey(debouncedViewState);
+  const statusPrimary = presentation === "group_locations" ? mapStatus?.renderedGroups ?? pointCount : mapStatus?.renderedSamples ?? pointCount;
+  const statusLabel = presentation === "group_locations" ? "groups" : "samples";
 
   return (
-    <div className={`map-view map-base-${baseStyle} map-projection-${projectionMode}`} data-query-key={activeQueryKey}>
+    <div className={`map-view map-base-${baseStyle} map-projection-${projectionMode}`}>
       <div ref={containerRef} className="map-canvas" />
       {mapError ? (
         <div className="map-empty">
@@ -664,22 +712,28 @@ export function MapView({
         </div>
       ) : null}
       <div className="map-status">
-        <strong>{new Intl.NumberFormat("en-US").format(pointCount)}</strong>
-        <span>{presentation === "sample_cloud" ? "sample markers" : presentation === "group_locations" ? "group markers" : "map markers"}</span>
+        <strong>{new Intl.NumberFormat("en-US").format(statusPrimary)}</strong>
+        <span>{statusLabel}</span>
         <small>
-          {queryLoading ? "Updating" : `${new Intl.NumberFormat("en-US").format(mapStatus?.totalMatched ?? 0)} matched`}
+          {queryLoading ? "Loading cache" : `${new Intl.NumberFormat("en-US").format(mapStatus?.totalMatched ?? 0)} matched`}
         </small>
+        <small>Zoom {currentZoomPercent}%</small>
       </div>
-      {legendItems.length ? (
-        <div className="map-legend">
-          {legendItems.map((item) => (
-            <span key={item.label} title={`${item.label}: ${item.count}`}>
-              <i style={{ background: item.color }} />
-              {item.label}
-            </span>
-          ))}
-        </div>
-      ) : null}
+      <div className="map-basemap-control" aria-label="Base map">
+        {mapBaseStyles.map((style) => (
+          <button
+            key={style.id}
+            className={baseStyle === style.id ? "active" : ""}
+            type="button"
+            onClick={() => onBaseStyleChange(style.id)}
+            title={`${style.label} base map`}
+          >
+            <i style={{ background: style.swatch }} />
+            <span>{style.label}</span>
+          </button>
+        ))}
+      </div>
+      {showLegend ? <MapLegendPanel legend={mapData?.legend ?? null} /> : null}
       {queryError ? (
         <div className="map-empty">
           <strong>Map query failed</strong>
@@ -692,6 +746,46 @@ export function MapView({
           <span>Current filters did not return reviewable coordinates in this map area.</span>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function formatLegendCount(value: number) {
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
+function MapLegendPanel({ legend }: { legend: MapLegend | null }) {
+  if (!legend) return null;
+  if (legend.kind === "gradient") {
+    const gradient = legend.stops.length
+      ? `linear-gradient(90deg, ${legend.stops.map((stop, index) => `${stop.color} ${(index / Math.max(1, legend.stops.length - 1)) * 100}%`).join(", ")})`
+      : "#64748b";
+    return (
+      <div className="map-legend map-legend-gradient">
+        <strong>{legend.title}</strong>
+        <div className="map-gradient-bar" style={{ background: gradient }} />
+        <div className="map-gradient-ticks">
+          {legend.ticks.map((tick) => (
+            <span key={`${tick.value}:${tick.label}`}>{tick.label}</span>
+          ))}
+        </div>
+        {legend.unknownCount ? <small>Unknown {formatLegendCount(legend.unknownCount)}</small> : null}
+      </div>
+    );
+  }
+
+  if (!legend.items.length) return null;
+  const expanded = legend.items.length > 12;
+  return (
+    <div className={`map-legend ${expanded ? "map-legend-scroll" : ""}`}>
+      {expanded ? <strong>{legend.title}</strong> : null}
+      {legend.items.map((item) => (
+        <span key={item.label} title={`${item.label}: ${formatLegendCount(item.count)}`}>
+          <i style={{ background: item.color }} />
+          {item.label}
+          {expanded ? <b>{formatLegendCount(item.count)}</b> : null}
+        </span>
+      ))}
     </div>
   );
 }

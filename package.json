@@ -1,0 +1,48 @@
+{
+  "name": "archaebase",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "pg:start": "bash scripts/pg-local.sh start",
+    "pg:stop": "bash scripts/pg-local.sh stop",
+    "pg:status": "bash scripts/pg-local.sh status",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "import:aadr": "tsx scripts/import-aadr.ts",
+    "import:admixture": "tsx scripts/import-admixture.ts"
+  },
+  "dependencies": {
+    "@tanstack/react-table": "latest",
+    "@tanstack/react-virtual": "latest",
+    "clsx": "latest",
+    "dotenv": "^17.4.2",
+    "kysely": "latest",
+    "lucide-react": "latest",
+    "next": "latest",
+    "pg": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.2",
+    "@types/node": "latest",
+    "@types/pg": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "autoprefixer": "latest",
+    "eslint": "latest",
+    "eslint-config-next": "latest",
+    "postcss": "latest",
+    "tailwindcss": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}

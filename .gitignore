@@ -1,0 +1,77 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Next.js / build outputs
+.next/
+out/
+dist/
+coverage/
+.turbo/
+*.log
+*.tsbuildinfo
+
+# Project-local PostgreSQL/PostGIS runtime and caches
+.local/
+
+# Raw/generated data should be imported, not committed.
+data/
+imports/
+exports/
+dumps/
+*.dump
+*.sql
+*.sql.gz
+*.bak
+*.parquet
+*.sqlite
+*.db
+
+# AADR / genomics source datasets
+*.anno
+*.geno
+*.snp
+*.ind
+*.bed
+*.bim
+*.fam
+*.pgen
+*.pvar
+*.psam
+*.vcf
+*.vcf.gz
+*.bcf
+*.bam
+*.bai
+*.cram
+*.crai
+*.f2
+*.f2.gz
+
+# ADMIXTURE / ancestry model outputs
+*.Q
+*.P
+*.qopt
+*.loglik
+*.runlog
+
+# Temporary import/work files
+*.anno.tmp
+*.tmp
+*.temp
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Keep project schema source tracked even though SQL dumps are ignored.
+!db/schema.sql

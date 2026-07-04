@@ -1,0 +1,42 @@
+* text=auto eol=lf
+
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.sql text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Scientific/raw data should not normally be committed. If force-added, treat as binary.
+*.anno binary
+*.geno binary
+*.snp binary
+*.ind binary
+*.bed binary
+*.bim binary
+*.fam binary
+*.pgen binary
+*.pvar binary
+*.psam binary
+*.vcf binary
+*.vcf.gz binary
+*.bcf binary
+*.bam binary
+*.bai binary
+*.cram binary
+*.crai binary
+*.f2 binary
+*.f2.gz binary
+*.Q binary
+*.P binary
+*.parquet binary
+*.sqlite binary
+*.db binary
+*.dump binary
+

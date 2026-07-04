@@ -14,6 +14,7 @@
     "pg:stop": "bash scripts/pg-local.sh stop",
     "pg:status": "bash scripts/pg-local.sh status",
     "db:migrate": "tsx scripts/migrate.ts",
+    "db:rebuild-map": "tsx scripts/rebuild-map-points.ts",
     "import:aadr": "tsx scripts/import-aadr.ts",
     "import:admixture": "tsx scripts/import-admixture.ts"
   },
@@ -24,6 +25,7 @@
     "dotenv": "^17.4.2",
     "kysely": "latest",
     "lucide-react": "latest",
+    "maplibre-gl": "^5.24.0",
     "next": "latest",
     "pg": "latest",
     "react": "latest",

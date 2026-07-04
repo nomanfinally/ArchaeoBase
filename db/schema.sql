@@ -115,3 +115,41 @@ CREATE INDEX IF NOT EXISTS samples_geom_gist_idx ON samples USING GIST (geom);
 CREATE INDEX IF NOT EXISTS admixture_values_sample_idx ON admixture_values (sample_id);
 CREATE INDEX IF NOT EXISTS admixture_values_run_component_idx ON admixture_values (run_id, component_index);
 
+CREATE MATERIALIZED VIEW IF NOT EXISTS sample_map_points AS
+SELECT
+  s.id AS sample_id,
+  s.release_id,
+  s.row_number,
+  s.genetic_id,
+  s.group_id,
+  s.locality,
+  s.political_entity,
+  s.date_mean_year_ce,
+  s.snp_1240k,
+  s.molecular_sex,
+  s.y_hap_isogg,
+  s.y_hap_terminal,
+  s.mtdna_haplogroup,
+  s.data_type,
+  s.assessment,
+  s.has_coordinates,
+  s.latitude,
+  s.longitude,
+  s.geom,
+  CASE
+    WHEN s.geom IS NOT NULL THEN ST_Transform(s.geom, 3857)::geometry(Point, 3857)
+    ELSE NULL
+  END AS geom_webmercator,
+  CASE
+    WHEN s.has_coordinates AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
+    THEN concat(round(s.latitude::numeric, 6), ',', round(s.longitude::numeric, 6))
+    ELSE NULL
+  END AS coordinate_key
+FROM samples s;
+
+CREATE UNIQUE INDEX IF NOT EXISTS sample_map_points_sample_id_idx ON sample_map_points (sample_id);
+CREATE INDEX IF NOT EXISTS sample_map_points_release_idx ON sample_map_points (release_id);
+CREATE INDEX IF NOT EXISTS sample_map_points_group_idx ON sample_map_points (release_id, group_id);
+CREATE INDEX IF NOT EXISTS sample_map_points_coordinate_key_idx ON sample_map_points (release_id, coordinate_key);
+CREATE INDEX IF NOT EXISTS sample_map_points_geom_gist_idx ON sample_map_points USING GIST (geom);
+CREATE INDEX IF NOT EXISTS sample_map_points_webmercator_gist_idx ON sample_map_points USING GIST (geom_webmercator);

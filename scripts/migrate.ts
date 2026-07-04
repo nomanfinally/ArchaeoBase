@@ -12,7 +12,7 @@ async function main() {
   }
 
   const sql = await readFile(resolve("db/schema.sql"), "utf8");
-  const pool = new Pool({ connectionString });
+  const pool = new Pool({ connectionString, options: "-c jit=off" });
 
   try {
     await pool.query(sql);

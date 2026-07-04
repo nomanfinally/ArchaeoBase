@@ -14,7 +14,7 @@ export function getPool() {
   }
 
   if (!globalThis.archaebasePool) {
-    globalThis.archaebasePool = new Pool({ connectionString });
+    globalThis.archaebasePool = new Pool({ connectionString, options: "-c jit=off" });
   }
 
   return globalThis.archaebasePool;
@@ -32,4 +32,3 @@ export async function getLatestReleaseId() {
 
   return result.rows[0];
 }
-

@@ -156,7 +156,7 @@ async function main() {
 
   const { file, release, replace } = parseArgs();
   const sourceFile = resolve(file);
-  const pool = new Pool({ connectionString });
+  const pool = new Pool({ connectionString, options: "-c jit=off" });
   const client = await pool.connect();
 
   let rowCount = 0;
@@ -257,6 +257,7 @@ async function main() {
       rowCount,
       releaseId
     ]);
+    await client.query("REFRESH MATERIALIZED VIEW sample_map_points");
     await client.query("COMMIT");
     console.log(`\nImported ${rowCount} AADR rows into release '${release}'.`);
   } catch (error) {

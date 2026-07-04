@@ -1,16 +1,38 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SortingState } from "@tanstack/react-table";
-import { ArrowUpDown, Columns3, Filter, GripVertical, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowUpDown, Columns3, Filter, GripVertical, Map as MapIcon, Plus, RefreshCw, Search, Settings2, Table2, Trash2, X } from "lucide-react";
 import type { FilterNode } from "@/lib/filters/types";
+import type { MapQueryResponse } from "@/lib/map/types";
 import type { FieldDefinition, Operator } from "@/lib/schema/fields";
 import { DataTable } from "./DataTable";
 import { FilterBuilder } from "./FilterBuilder";
-import { fullTimeWindow, isFullTimeWindow, TimeWindow, type TimeWindowValue } from "./TimeWindow";
+import {
+  MapView,
+  mapBaseStyles,
+  mapColorOptions,
+  mapPresentationOptions,
+  type MapBaseStyle,
+  type MapColorBy,
+  type MapPresentation,
+  type MapProjectionMode
+} from "./MapView";
+import {
+  defaultPeriodOptions,
+  fullTimeWindow,
+  isFullTimeWindow,
+  periodStorageKey,
+  TimePeriodSettings,
+  TimeWindow,
+  validStoredPeriods,
+  type PeriodOption,
+  type TimeWindowValue
+} from "./TimeWindow";
 
 type Entity = "sample" | "group";
-type PanelMode = "filters" | "sort" | "columns" | null;
+type ViewMode = "table" | "map";
+type PanelMode = "filters" | "sort" | "columns" | "settings" | null;
 
 type SchemaResponse = {
   sampleFields: FieldDefinition[];
@@ -29,6 +51,8 @@ type AdmixtureRun = {
   k: number;
   components: { componentIndex: number; colorHex: string; label: string | null }[];
 };
+
+type MapReviewData = Pick<MapQueryResponse, "unmappedSamples" | "coordinateIssues">;
 
 const emptyFilter: FilterNode = {
   type: "group",
@@ -63,25 +87,47 @@ function countConditions(node: FilterNode): number {
 
 function combineWithTimeWindow(filter: FilterNode, timeWindow: TimeWindowValue): FilterNode {
   if (isFullTimeWindow(timeWindow)) return filter;
+  const intervals = timeWindow.intervals?.length ? timeWindow.intervals : [{ startYear: timeWindow.startYear, endYear: timeWindow.endYear }];
 
   return {
     type: "group",
     op: "and",
     children: [
       filter,
-      {
-        type: "condition",
-        field: "date_mean_year_ce",
-        operator: "between",
-        value: [timeWindow.startYear, timeWindow.endYear]
-      }
+      intervals.length === 1
+        ? {
+            type: "condition",
+            field: "date_mean_year_ce",
+            operator: "between",
+            value: [intervals[0].startYear, intervals[0].endYear]
+          }
+        : {
+            type: "group",
+            op: "or",
+            children: intervals.map((interval) => ({
+              type: "condition",
+              field: "date_mean_year_ce",
+              operator: "between",
+              value: [interval.startYear, interval.endYear]
+            }))
+          }
     ]
   };
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timeout);
+  }, [value, delayMs]);
+  return debounced;
 }
 
 export function Explorer() {
   const [schema, setSchema] = useState<SchemaResponse | null>(null);
   const [entity, setEntity] = useState<Entity>("sample");
+  const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [globalSearch, setGlobalSearch] = useState("");
   const [searchField, setSearchField] = useState("all");
   const [filterDraft, setFilterDraft] = useState<FilterNode>(emptyFilter);
@@ -98,9 +144,20 @@ export function Explorer() {
   const [runs, setRuns] = useState<AdmixtureRun[]>([]);
   const [admixtureRunId, setAdmixtureRunId] = useState<number | null>(null);
   const [timeWindow, setTimeWindow] = useState<TimeWindowValue>(fullTimeWindow);
+  const [periodOptions, setPeriodOptions] = useState<PeriodOption[]>(defaultPeriodOptions);
+  const [periodOptionsHydrated, setPeriodOptionsHydrated] = useState(false);
+  const [mapBaseStyle, setMapBaseStyle] = useState<MapBaseStyle>("light");
+  const [mapColorBy, setMapColorBy] = useState<MapColorBy>("sex");
+  const [mapPresentation, setMapPresentation] = useState<MapPresentation>("smart_split");
+  const [mapCombineNearbyGroups, setMapCombineNearbyGroups] = useState(true);
+  const [mapProjectionMode, setMapProjectionMode] = useState<MapProjectionMode>("flat");
+  const [mapTotal, setMapTotal] = useState(0);
+  const [mapReview, setMapReview] = useState<MapReviewData | null>(null);
+  const [mapIssuePopoverOpen, setMapIssuePopoverOpen] = useState(false);
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
   const [draggedProperty, setDraggedProperty] = useState<string | null>(null);
   const [propertyDropTarget, setPropertyDropTarget] = useState<{ id: string; position: "before" | "after" } | null>(null);
+  const mapQueryCacheRef = useRef(new Map<string, { rows: Record<string, unknown>[]; total: number; releaseName: string | null }>());
 
   useEffect(() => {
     async function loadSchema() {
@@ -120,6 +177,25 @@ export function Explorer() {
     void loadAdmixtureRuns();
   }, []);
 
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(periodStorageKey);
+      if (stored) {
+        const parsed = validStoredPeriods(JSON.parse(stored));
+        if (parsed) setPeriodOptions(parsed);
+      }
+    } catch {
+      setPeriodOptions(defaultPeriodOptions);
+    } finally {
+      setPeriodOptionsHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!periodOptionsHydrated) return;
+    window.localStorage.setItem(periodStorageKey, JSON.stringify(periodOptions));
+  }, [periodOptions, periodOptionsHydrated]);
+
   const allFields = useMemo(() => {
     if (!schema) return [];
     return entity === "sample" ? schema.sampleFields : schema.groupFields;
@@ -132,40 +208,69 @@ export function Explorer() {
   const displayedRows = useMemo(() => normalizeRows(rows, entity), [rows, entity]);
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const appliedFilterCount = countConditions(filter);
-  const queryFilter = useMemo(() => combineWithTimeWindow(filter, timeWindow), [filter, timeWindow]);
+  const debouncedSearch = useDebouncedValue(globalSearch, 180);
+  const debouncedTimeWindow = useDebouncedValue(timeWindow, viewMode === "map" ? 260 : 80);
+  const queryFilter = useMemo(() => combineWithTimeWindow(filter, debouncedTimeWindow), [filter, debouncedTimeWindow]);
 
   useEffect(() => {
-    if (!schema) return;
+    const allowed = mapColorOptions.some((option) => option.id === mapColorBy);
+    if (!allowed) setMapColorBy("sex");
+  }, [mapColorBy]);
+
+  useEffect(() => {
+    if (!schema || viewMode === "map") return;
 
     const controller = new AbortController();
     async function run() {
       setLoading(true);
       setError(null);
       try {
+        const sort = viewMode === "map" ? [] : sorting.map((entry) => ({ field: entry.id, direction: entry.desc ? "desc" : "asc" }));
+        const mapCacheKey = viewMode === "map"
+          ? JSON.stringify({ entity, filter: queryFilter, globalSearch: debouncedSearch, searchField })
+          : null;
+        const cachedMapQuery = mapCacheKey ? mapQueryCacheRef.current.get(mapCacheKey) : null;
+        if (cachedMapQuery) {
+          setRows(cachedMapQuery.rows);
+          setTotal(cachedMapQuery.total);
+          setReleaseName(cachedMapQuery.releaseName);
+          return;
+        }
+
         const response = await fetch("/api/query", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
           body: JSON.stringify({
             entity,
-            view: "table",
+            view: viewMode,
             filter: queryFilter,
-            globalSearch,
+            globalSearch: debouncedSearch,
             searchField,
-            sort: sorting.map((entry) => ({ field: entry.id, direction: entry.desc ? "desc" : "asc" })),
-            page,
-            pageSize,
-            visibleColumns: visibleColumns[entity],
-            admixtureRunId
+            sort,
+            page: viewMode === "map" ? 1 : page,
+            pageSize: viewMode === "map" ? 30000 : pageSize,
+            admixtureRunId,
+            mapBounds: null
           })
         });
         const data = await response.json();
         if (!response.ok) {
           throw new Error(data.error ?? "Query failed");
         }
-        setRows(data.rows ?? []);
-        setTotal(data.total ?? 0);
-        setReleaseName(data.release?.name ?? null);
+        const nextRows = data.rows ?? [];
+        const nextTotal = data.total ?? 0;
+        const nextReleaseName = data.release?.name ?? null;
+        setRows(nextRows);
+        setTotal(nextTotal);
+        setReleaseName(nextReleaseName);
+        if (mapCacheKey) {
+          mapQueryCacheRef.current.set(mapCacheKey, { rows: nextRows, total: nextTotal, releaseName: nextReleaseName });
+          if (mapQueryCacheRef.current.size > 6) {
+            const oldestKey = mapQueryCacheRef.current.keys().next().value;
+            if (oldestKey) mapQueryCacheRef.current.delete(oldestKey);
+          }
+        }
       } catch (queryError) {
         if (queryError instanceof DOMException && queryError.name === "AbortError") return;
         setRows([]);
@@ -178,7 +283,7 @@ export function Explorer() {
 
     void run();
     return () => controller.abort();
-  }, [schema, entity, queryFilter, globalSearch, searchField, sorting, page, pageSize, visibleColumns, admixtureRunId]);
+  }, [schema, entity, viewMode, queryFilter, debouncedSearch, searchField, sorting, page, pageSize, admixtureRunId]);
 
   function toggleColumn(fieldId: string) {
     setVisibleColumns((current) => {
@@ -223,6 +328,22 @@ export function Explorer() {
   const hiddenFields = allFields.filter((field) => !visibleColumns[entity]?.includes(field.id));
   const sortableFields = allFields.filter((field) => field.sortable !== false);
   const isSearchExpanded = globalSearch.trim().length > 0;
+  const headerTotal = viewMode === "map" ? mapTotal : total;
+  const mapIssueCount = viewMode === "map" ? (mapReview?.unmappedSamples.total ?? 0) + (mapReview?.coordinateIssues.total ?? 0) : 0;
+  const mapIssueBadge = mapIssueCount > 999 ? "999+" : formatCount(mapIssueCount);
+
+  useEffect(() => {
+    if (viewMode !== "map" || mapIssueCount === 0) setMapIssuePopoverOpen(false);
+  }, [viewMode, mapIssueCount]);
+
+  const handleMapSummaryChange = useCallback((summary: MapQueryResponse["summary"], release: MapQueryResponse["release"]) => {
+    setMapTotal(summary.totalMatched);
+    setReleaseName(release.name);
+  }, []);
+
+  const handleMapReviewChange = useCallback((review: MapReviewData) => {
+    setMapReview(review);
+  }, []);
 
   function updateSortRule(index: number, nextRule: SortingState[number]) {
     setSorting((current) => current.map((entry, entryIndex) => (entryIndex === index ? nextRule : entry)));
@@ -273,9 +394,88 @@ export function Explorer() {
               Groups
             </button>
           </div>
+          <div className="segmented topbar-segmented view-segmented" aria-label="View">
+            <button
+              type="button"
+              className={viewMode === "table" ? "active" : ""}
+              onClick={() => {
+                setViewMode("table");
+                setPage(1);
+              }}
+            >
+              <Table2 size={14} />
+              Table
+            </button>
+            <button
+              type="button"
+              className={viewMode === "map" ? "active" : ""}
+              onClick={() => {
+                setViewMode("map");
+                setPage(1);
+              }}
+            >
+              <MapIcon size={14} />
+              Map
+            </button>
+          </div>
         </div>
         <div className="topbar-meta">
-          <span>{formatCount(total)} rows</span>
+          {mapIssueCount > 0 ? (
+            <div className="map-issue-control">
+              <button
+                className={`map-issue-button ${mapIssuePopoverOpen ? "active" : ""}`}
+                type="button"
+                onClick={() => setMapIssuePopoverOpen((current) => !current)}
+                aria-expanded={mapIssuePopoverOpen}
+                aria-label={`${mapIssueBadge} map data issues`}
+                title="Map data issues"
+              >
+                <AlertCircle size={15} />
+                <span className="map-issue-badge">{mapIssueBadge}</span>
+              </button>
+              {mapIssuePopoverOpen ? (
+                <div className="map-issue-menu" role="dialog" aria-label="Map data issues">
+                  {mapReview?.unmappedSamples.total ? (
+                    <section>
+                      <div className="map-issue-menu-header">
+                        <strong>Unmapped Samples</strong>
+                        <span>{formatCount(mapReview.unmappedSamples.total)}</span>
+                      </div>
+                      <p>{formatCount(mapReview.unmappedSamples.total)} matched samples lack coordinates.</p>
+                      {mapReview.unmappedSamples.samples.length ? (
+                        <ul>
+                          {mapReview.unmappedSamples.samples.map((sample) => (
+                            <li key={`unmapped:${sample.geneticId}:${sample.groupId}:${sample.locality}`}>
+                              <b>{sample.geneticId || sample.groupId || "Sample"}</b>
+                              <small>{sample.locality || sample.politicalEntity || "Unknown"}</small>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </section>
+                  ) : null}
+                  {mapReview?.coordinateIssues.total ? (
+                    <section>
+                      <div className="map-issue-menu-header">
+                        <strong>Coordinate Review</strong>
+                        <span>{formatCount(mapReview.coordinateIssues.total)}</span>
+                      </div>
+                      <p>{formatCount(mapReview.coordinateIssues.total)} visible samples have suspicious coordinates.</p>
+                      <ul>
+                        {mapReview.coordinateIssues.samples.map((sample) => (
+                          <li key={`issue:${sample.geneticId}:${sample.latitude}:${sample.longitude}`}>
+                            <b>{sample.geneticId || sample.groupId || "Sample"}</b>
+                            <small>{sample.reason}</small>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          <span>{formatCount(headerTotal)} rows</span>
           <button className="button" type="button" onClick={resetFilters}>
             <RefreshCw size={15} />
             Reset
@@ -315,6 +515,17 @@ export function Explorer() {
         >
           <Columns3 size={15} />
           <span className="toolbar-label">Properties</span>
+        </button>
+
+        <button
+          className={`button icon-label toolbar-action ${panelMode === "settings" ? "active" : ""}`}
+          type="button"
+          onClick={() => setPanelMode((current) => (current === "settings" ? null : "settings"))}
+          aria-expanded={panelMode === "settings"}
+          title="Settings"
+        >
+          <Settings2 size={15} />
+          <span className="toolbar-label">Settings</span>
         </button>
 
         <div className="toolbar-section search-control">
@@ -376,6 +587,7 @@ export function Explorer() {
 
         <TimeWindow
           value={timeWindow}
+          periodOptions={periodOptions}
           onChange={(next) => {
             setTimeWindow(next);
             setPage(1);
@@ -387,7 +599,7 @@ export function Explorer() {
       <div className="content">
         <aside className={`side-panel ${panelMode ? "open" : ""}`} aria-hidden={!panelMode}>
           <div className="panel-header">
-            <span>{panelMode === "columns" ? "Properties" : panelMode === "sort" ? "Sort" : "Filters"}</span>
+            <span>{panelMode === "columns" ? "Properties" : panelMode === "sort" ? "Sort" : panelMode === "settings" ? "Settings" : "Filters"}</span>
             <button className="icon-button" type="button" onClick={() => setPanelMode(null)} aria-label="Close panel">
               <X size={16} />
             </button>
@@ -486,6 +698,108 @@ export function Explorer() {
             </section>
           ) : null}
 
+          {panelMode === "settings" ? (
+            <section>
+              {viewMode === "map" ? (
+                <div className="settings-stack">
+                  <div className="settings-block">
+                    <span className="settings-title">Base Map</span>
+                    <div className="map-style-options">
+                      {mapBaseStyles.map((style) => (
+                        <button
+                          key={style.id}
+                          className={mapBaseStyle === style.id ? "active" : ""}
+                          type="button"
+                          onClick={() => setMapBaseStyle(style.id)}
+                        >
+                          <i style={{ background: style.swatch }} />
+                          <span>{style.label}</span>
+                          <b>{mapBaseStyle === style.id ? "✓" : ""}</b>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <label className="settings-row">
+                    <span>Dot Color</span>
+                    <select className="select" value={mapColorBy} onChange={(event) => setMapColorBy(event.target.value as MapColorBy)}>
+                      {mapColorOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="settings-row">
+                    <span>Map Detail</span>
+                    <div className="settings-segmented">
+                      {mapPresentationOptions.map((option) => (
+                        <button
+                          key={option.id}
+                          className={mapPresentation === option.id ? "active" : ""}
+                          type="button"
+                          onClick={() => setMapPresentation(option.id)}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <label className={`settings-row ${mapPresentation !== "smart_split" ? "disabled" : ""}`}>
+                    <span>Combine nearby groups</span>
+                    <input
+                      type="checkbox"
+                      checked={mapCombineNearbyGroups}
+                      disabled={mapPresentation !== "smart_split"}
+                      onChange={(event) => setMapCombineNearbyGroups(event.target.checked)}
+                    />
+                  </label>
+                  <div className="settings-row">
+                    <span>Projection</span>
+                    <div className="settings-segmented compact">
+                      <button
+                        className={mapProjectionMode === "flat" ? "active" : ""}
+                        type="button"
+                        onClick={() => setMapProjectionMode("flat")}
+                      >
+                        Flat
+                      </button>
+                      <button
+                        className={mapProjectionMode === "globe" ? "active" : ""}
+                        type="button"
+                        onClick={() => setMapProjectionMode("globe")}
+                      >
+                        Globe
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="settings-stack">
+                  <label className="settings-row">
+                    <span>Page Size</span>
+                    <select
+                      className="select"
+                      value={pageSize}
+                      onChange={(event) => {
+                        setPageSize(Number(event.target.value));
+                        setPage(1);
+                      }}
+                    >
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                      <option value={250}>250</option>
+                      <option value={500}>500</option>
+                    </select>
+                  </label>
+                </div>
+              )}
+              <div className="settings-block">
+                <span className="settings-title">Period Boundaries</span>
+                <TimePeriodSettings periodOptions={periodOptions} onChange={setPeriodOptions} />
+              </div>
+            </section>
+          ) : null}
+
           {panelMode === "columns" ? (
             <section>
               <div className="column-list">
@@ -554,21 +868,39 @@ export function Explorer() {
               <p className="mono">npm run import:aadr -- --file v66.2M.aadr.PUB.anno --release v66.2M.aadr.PUB --replace</p>
             </div>
           ) : (
-            <DataTable
-              rows={displayedRows}
-              fields={activeFields}
-              visibleColumns={visibleColumns[entity] ?? []}
-              sorting={sorting}
-              onSortingChange={(next) => {
-                setSorting(next);
-                setPage(1);
-              }}
-              onColumnOrderChange={reorderVisibleColumn}
-              columnWidthStorageKey={`archaebase:${entity}:column-widths`}
-              showAdmixture={admixtureRunId !== null}
-            />
+            <div className={`result-window ${viewMode === "map" ? "map-mode" : "table-mode"}`}>
+              {viewMode === "table" ? (
+                <DataTable
+                  rows={displayedRows}
+                  fields={activeFields}
+                  visibleColumns={visibleColumns[entity] ?? []}
+                  sorting={sorting}
+                  onSortingChange={(next) => {
+                    setSorting(next);
+                    setPage(1);
+                  }}
+                  onColumnOrderChange={reorderVisibleColumn}
+                  columnWidthStorageKey={`archaebase:${entity}:column-widths`}
+                  showAdmixture={admixtureRunId !== null}
+                />
+              ) : (
+                <MapView
+                  filter={queryFilter}
+                  globalSearch={debouncedSearch}
+                  searchField={searchField}
+                  baseStyle={mapBaseStyle}
+                  colorBy={mapColorBy}
+                  presentation={mapPresentation}
+                  combineNearbyGroups={mapCombineNearbyGroups}
+                  projectionMode={mapProjectionMode}
+                  onSummaryChange={handleMapSummaryChange}
+                  onReviewChange={handleMapReviewChange}
+                />
+              )}
+            </div>
           )}
 
+          {viewMode === "table" ? (
           <div className="floating-pagination" suppressHydrationWarning>
             <span>
               Page {formatCount(page)} / {formatCount(pages)}
@@ -593,6 +925,7 @@ export function Explorer() {
               Last
             </button>
           </div>
+          ) : null}
         </main>
       </div>
     </div>

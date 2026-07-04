@@ -1,6 +1,7 @@
 "use client";
 
-import { Plus, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Plus, Trash2, X } from "lucide-react";
 import type { FilterNode } from "@/lib/filters/types";
 import type { FieldDefinition, Operator } from "@/lib/schema/fields";
 
@@ -52,11 +53,101 @@ function removeChild(group: Extract<FilterNode, { type: "group" }>, index: numbe
   };
 }
 
-function valueControl(
-  node: Extract<FilterNode, { type: "condition" }>,
-  field: FieldDefinition | undefined,
-  onChange: (next: FilterNode) => void
-) {
+function uniqueValueOperators(operator: string) {
+  return operator === "equals" || operator === "not_equals";
+}
+
+function UniqueValueInput({
+  node,
+  field,
+  onChange
+}: {
+  node: Extract<FilterNode, { type: "condition" }>;
+  field: FieldDefinition;
+  onChange: (next: FilterNode) => void;
+}) {
+  const [query, setQuery] = useState(String(node.value ?? ""));
+  const [values, setValues] = useState<string[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    setQuery(String(node.value ?? ""));
+  }, [node.field, node.operator, node.value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({
+          field: field.id,
+          q: query,
+          limit: "50"
+        });
+        const response = await fetch(`/api/schema/field-values?${params.toString()}`, { signal: controller.signal });
+        const data = (await response.json()) as { values?: string[] };
+        setValues(Array.from(new Set(data.values ?? [])));
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setValues([]);
+      } finally {
+        setLoading(false);
+      }
+    }, 120);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [field.id, open, query]);
+
+  function commit(nextValue: string) {
+    setQuery(nextValue);
+    onChange({ ...node, value: nextValue });
+  }
+
+  return (
+    <div className="value-search value-input">
+      <input
+        className="input"
+        value={query}
+        placeholder="Search unique values"
+        onFocus={() => setOpen(true)}
+        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        onChange={(event) => commit(event.target.value)}
+      />
+      {query ? (
+        <button className="value-clear" type="button" aria-label="Clear value" onMouseDown={(event) => event.preventDefault()} onClick={() => commit("")}>
+          <X size={13} />
+        </button>
+      ) : null}
+      {open ? (
+        <div className="value-suggestions">
+          {loading ? <div className="value-suggestion muted">Searching...</div> : null}
+          {!loading && values.length
+            ? values.map((value) => (
+                <button key={value} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => commit(value)}>
+                  {value}
+                </button>
+              ))
+            : null}
+          {!loading && !values.length ? <div className="value-suggestion muted">No unique values</div> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ValueControl({
+  node,
+  field,
+  onChange
+}: {
+  node: Extract<FilterNode, { type: "condition" }>;
+  field: FieldDefinition | undefined;
+  onChange: (next: FilterNode) => void;
+}) {
   if (node.operator === "is_empty" || node.operator === "is_not_empty") {
     return <span className="mono value-input">..</span>;
   }
@@ -72,6 +163,10 @@ function valueControl(
         <option value="false">false</option>
       </select>
     );
+  }
+
+  if (field && uniqueValueOperators(node.operator)) {
+    return <UniqueValueInput node={node} field={field} onChange={onChange} />;
   }
 
   return (
@@ -135,7 +230,7 @@ function FilterNodeEditor({
             </option>
           ))}
         </select>
-        {valueControl(node, field, onChange)}
+        <ValueControl node={node} field={field} onChange={onChange} />
         {onRemove ? (
           <button className="button danger" type="button" onClick={onRemove} title="Remove filter">
             <Trash2 size={14} />

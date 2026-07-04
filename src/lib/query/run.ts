@@ -8,8 +8,26 @@ const SAMPLE_SELECT_COLUMNS = [
   ...sampleFields.map((field) => `${field.sampleColumn} AS "${field.id}"`)
 ];
 
+const SAMPLE_MAP_SELECT_COLUMNS = [
+  "s.id",
+  's.genetic_id AS "genetic_id"',
+  's.group_id AS "group_id"',
+  's.locality AS "locality"',
+  's.political_entity AS "political_entity"',
+  's.date_mean_year_ce AS "date_mean_year_ce"',
+  's.snp_1240k AS "snp_1240k"',
+  's.molecular_sex AS "molecular_sex"',
+  's.y_hap_isogg AS "y_hap_isogg"',
+  's.y_hap_terminal AS "y_hap_terminal"',
+  's.mtdna_haplogroup AS "mtdna_haplogroup"',
+  's.data_type AS "data_type"',
+  's.assessment AS "assessment"',
+  's.latitude AS "latitude"',
+  's.longitude AS "longitude"'
+];
+
 const MAX_PAGE_SIZE = 500;
-const MAX_MAP_SIZE = 5000;
+const MAX_MAP_SIZE = 30000;
 
 function clampPage(value: unknown) {
   const page = Number(value ?? 1);
@@ -28,13 +46,16 @@ function offsetParams(text: string, offset: number) {
   return text.replace(/\$(\d+)/g, (_, index) => `$${Number(index) + offset}`);
 }
 
-function buildSampleWhere(request: QueryRequest, releaseId: string) {
+function buildSampleWhere(request: QueryRequest, releaseId: string, requireCoordinates = false) {
   const filter = compileSampleFilter(request.filter);
   const globalSearch = compileGlobalSearch(request.globalSearch, request.searchField);
   const mapBounds = request.view === "map" ? compileMapBounds(request.mapBounds) : { text: "TRUE", params: [] };
   const releaseFilter: SqlFragment = { text: "s.release_id = $1", params: [releaseId] };
+  const coordinateFilter: SqlFragment = requireCoordinates
+    ? { text: "s.has_coordinates IS TRUE AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL", params: [] }
+    : { text: "TRUE", params: [] };
 
-  return mergeWhere([releaseFilter, filter, globalSearch, mapBounds]);
+  return mergeWhere([releaseFilter, filter, globalSearch, mapBounds, coordinateFilter]);
 }
 
 function buildOrderBy(sort: SortSpec[] | undefined, entity: QueryRequest["entity"]) {
@@ -75,22 +96,25 @@ async function querySamples(request: QueryRequest) {
   const release = await getLatestReleaseId();
   const page = clampPage(request.page);
   const pageSize = clampPageSize(request.pageSize, request.view);
-  const where = buildSampleWhere(request, release.id);
-  const orderBy = buildOrderBy(request.sort, "sample");
+  const where = buildSampleWhere(request, release.id, request.view === "map");
+  const orderBy = request.view === "map" && !request.sort?.length ? "s.id ASC" : buildOrderBy(request.sort, "sample");
   const admixtureRunId = parseAdmixtureRunId(request.admixtureRunId);
 
   const selectParams = [...where.params];
-  const admixtureSelect = admixtureRunId
+  const admixtureSelect = request.view !== "map" && admixtureRunId
     ? `, (
         SELECT jsonb_object_agg(av.component_index, av.fraction ORDER BY av.component_index)
         FROM admixture_values av
         WHERE av.sample_id = s.id AND av.run_id = $${selectParams.push(admixtureRunId)}
       ) AS admixture`
-    : ", NULL::jsonb AS admixture";
+    : request.view === "map"
+      ? ""
+      : ", NULL::jsonb AS admixture";
+  const selectColumns = request.view === "map" ? SAMPLE_MAP_SELECT_COLUMNS : SAMPLE_SELECT_COLUMNS;
 
   const query = addLimitOffset(
     `
-      SELECT ${SAMPLE_SELECT_COLUMNS.join(", ")}
+      SELECT ${selectColumns.join(", ")}
       ${admixtureSelect}
       FROM samples s
       WHERE ${where.text}

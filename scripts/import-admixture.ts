@@ -74,7 +74,7 @@ async function main() {
     throw new Error(`Q matrix has ${qRows.length} rows but ID file has ${geneticIds.length} IDs.`);
   }
 
-  const pool = new Pool({ connectionString });
+  const pool = new Pool({ connectionString, options: "-c jit=off" });
   const client = await pool.connect();
 
   try {

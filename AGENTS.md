@@ -14,4 +14,4 @@ This project is a web-based ancient DNA metadata explorer for AADR `.anno` data 
 10. Preserve long original AADR headers as metadata/tooltips where useful, but use short internal field names in code and SQL.
 11. Keep map view and table view as renderers over the same query/filter state.
 12. Run `npm test` and `npm run build` after implementation changes whenever dependencies are installed.
-
+13. Use clear, professional, compact UI labels. Avoid joke, filler, or awkward control names; choose concise academic wording for user-facing text.

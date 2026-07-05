@@ -179,6 +179,8 @@ async function queryGroups(request: QueryRequest) {
         count(*)::integer AS sample_count,
         string_agg(DISTINCT fs.political_entity, ', ' ORDER BY fs.political_entity) AS countries_text,
         array_remove(array_agg(DISTINCT fs.political_entity ORDER BY fs.political_entity), NULL) AS countries,
+        string_agg(DISTINCT fs.regions, ', ' ORDER BY fs.regions) AS regions_text,
+        array_remove(array_agg(DISTINCT fs.regions ORDER BY fs.regions), NULL) AS regions,
         array_remove(array_agg(DISTINCT fs.locality ORDER BY fs.locality), NULL) AS localities,
         string_agg(DISTINCT fs.locality, '; ' ORDER BY fs.locality) AS localities_text,
         count(DISTINCT fs.locality)::integer AS locality_count,

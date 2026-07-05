@@ -41,6 +41,7 @@ export type ProfileView = {
     field?: string | null;
   };
   timeWindow?: ProfileTimeWindow;
+  timeMode?: "calendar" | "bp";
   periods?: PeriodOption[];
   admixtureRunId?: number | null;
   pageSize?: number;
@@ -270,6 +271,7 @@ export function normalizeProfileView(raw: unknown, schema: ProfileSchema, option
       field: typeof searchObject?.field === "string" || searchObject?.field === null ? searchObject.field : "group_id"
     },
     timeWindow: normalizeTimeWindow(object.timeWindow),
+    timeMode: object.timeMode === "bp" ? "bp" : "calendar",
     periods: normalizePeriods(object.periods),
     admixtureRunId: asNumber(object.admixtureRunId),
     pageSize: asNumber(object.pageSize) ?? undefined,

@@ -14,6 +14,7 @@
     "pg:stop": "bash scripts/pg-local.sh stop",
     "pg:status": "bash scripts/pg-local.sh status",
     "db:migrate": "tsx scripts/migrate.ts",
+    "db:regions": "tsx scripts/apply-regions.ts",
     "db:rebuild-map": "tsx scripts/rebuild-map-points.ts",
     "db:tune-map": "tsx scripts/tune-map-cache.ts",
     "import:aadr": "tsx scripts/import-aadr.ts",

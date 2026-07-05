@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS samples (
   group_id TEXT,
   locality TEXT,
   political_entity TEXT,
+  regions TEXT,
   latitude DOUBLE PRECISION,
   longitude DOUBLE PRECISION,
   pulldown_strategy TEXT,
@@ -105,6 +106,8 @@ CREATE INDEX IF NOT EXISTS samples_release_idx ON samples (release_id);
 CREATE INDEX IF NOT EXISTS samples_genetic_id_idx ON samples (genetic_id);
 CREATE INDEX IF NOT EXISTS samples_group_id_idx ON samples (group_id);
 CREATE INDEX IF NOT EXISTS samples_political_entity_idx ON samples (political_entity);
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS regions TEXT;
+CREATE INDEX IF NOT EXISTS samples_regions_idx ON samples (regions);
 CREATE INDEX IF NOT EXISTS samples_locality_idx ON samples (locality);
 CREATE INDEX IF NOT EXISTS samples_date_mean_bp_idx ON samples (date_mean_bp);
 CREATE INDEX IF NOT EXISTS samples_date_mean_year_ce_idx ON samples (date_mean_year_ce);
@@ -124,6 +127,7 @@ SELECT
   s.group_id,
   s.locality,
   s.political_entity,
+  s.regions,
   s.date_mean_year_ce,
   s.snp_1240k,
   s.molecular_sex,
@@ -163,6 +167,7 @@ CREATE TABLE IF NOT EXISTS sample_map_cache (
   group_site_key TEXT,
   locality TEXT,
   political_entity TEXT,
+  regions TEXT,
   date_mean_bp DOUBLE PRECISION,
   date_mean_year_ce DOUBLE PRECISION,
   coverage_1150k DOUBLE PRECISION,
@@ -238,6 +243,7 @@ CREATE TABLE IF NOT EXISTS group_map_cache (
   group_site_key TEXT NOT NULL,
   release_id BIGINT NOT NULL REFERENCES aadr_releases(id) ON DELETE CASCADE,
   group_id TEXT,
+  regions TEXT,
   site_cluster_id TEXT NOT NULL,
   full_sample_count INTEGER NOT NULL DEFAULT 0,
   centroid_latitude DOUBLE PRECISION NOT NULL,
@@ -291,10 +297,16 @@ CREATE TABLE IF NOT EXISTS group_map_cache (
 
 CREATE INDEX IF NOT EXISTS group_map_cache_release_idx ON group_map_cache (release_id);
 CREATE INDEX IF NOT EXISTS group_map_cache_group_idx ON group_map_cache (release_id, group_id);
+ALTER TABLE group_map_cache ADD COLUMN IF NOT EXISTS regions TEXT;
+CREATE INDEX IF NOT EXISTS group_map_cache_regions_idx ON group_map_cache (release_id, regions);
 CREATE INDEX IF NOT EXISTS group_map_cache_display_geom_gist_idx ON group_map_cache USING GIST (display_geom);
 CREATE INDEX IF NOT EXISTS group_map_cache_display_webmercator_gist_idx ON group_map_cache USING GIST (display_geom_webmercator);
 
 ALTER TABLE sample_map_cache ADD COLUMN IF NOT EXISTS group_cluster_label TEXT NOT NULL DEFAULT 'No group ID';
+ALTER TABLE samples ADD COLUMN IF NOT EXISTS regions TEXT;
+CREATE INDEX IF NOT EXISTS samples_regions_idx ON samples (regions);
+ALTER TABLE sample_map_cache ADD COLUMN IF NOT EXISTS regions TEXT;
+ALTER TABLE group_map_cache ADD COLUMN IF NOT EXISTS regions TEXT;
 ALTER TABLE sample_map_cache ADD COLUMN IF NOT EXISTS group_cluster_color_light TEXT NOT NULL DEFAULT '#000000';
 ALTER TABLE sample_map_cache ADD COLUMN IF NOT EXISTS group_cluster_color_dark TEXT NOT NULL DEFAULT '#000000';
 ALTER TABLE sample_map_cache ADD COLUMN IF NOT EXISTS gradient_smart_date_mean_bp_value DOUBLE PRECISION;

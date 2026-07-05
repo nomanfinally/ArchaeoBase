@@ -17,7 +17,7 @@ export type TimeWindowValue = {
   intervals?: { startYear: number; endYear: number; label?: string }[];
 };
 
-type TimeMode = "calendar" | "bp";
+export type TimeMode = "calendar" | "bp";
 type Era = "BCE" | "CE";
 const STEP = 50;
 export const periodStorageKey = "archaebase:time-periods";
@@ -158,6 +158,8 @@ type Props = {
   value: TimeWindowValue;
   onChange: (value: TimeWindowValue) => void;
   periodOptions: PeriodOption[];
+  mode: TimeMode;
+  onModeChange: (mode: TimeMode) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 };
@@ -249,13 +251,16 @@ export function TimePeriodSettings({ periodOptions, onChange }: TimePeriodSettin
   );
 }
 
-export function TimeWindow({ value, periodOptions: _periodOptions, open, onOpenChange }: Props) {
-  const [mode] = useState<TimeMode>("calendar");
+export function TimeWindow({ value, periodOptions: _periodOptions, mode, open, onOpenChange }: Props) {
   const label = useMemo(() => `${labelForMode(value.startYear, mode)} - ${labelForMode(value.endYear, mode)}`, [value, mode]);
 
   return (
     <div className="time-window">
-      <button className={`button time-window-button ${open ? "active" : ""}`} type="button" onClick={() => onOpenChange(!open)}>
+      <button
+        className={`button time-window-button ${open ? "active" : ""} ${isFullTimeWindow(value) ? "" : "state-active"}`}
+        type="button"
+        onClick={() => onOpenChange(!open)}
+      >
         <CalendarRange size={15} />
         <span>{label}</span>
       </button>
@@ -263,8 +268,7 @@ export function TimeWindow({ value, periodOptions: _periodOptions, open, onOpenC
   );
 }
 
-export function TimeWindowPanel({ value, onChange, periodOptions }: Pick<Props, "value" | "onChange" | "periodOptions">) {
-  const [mode, setMode] = useState<TimeMode>("calendar");
+export function TimeWindowPanel({ value, onChange, periodOptions, mode, onModeChange }: Pick<Props, "value" | "onChange" | "periodOptions" | "mode" | "onModeChange">) {
   const [lastPeriodClick, setLastPeriodClick] = useState<string | null>(null);
 
   const startPercent = percentForYear(value.startYear);
@@ -429,10 +433,10 @@ export function TimeWindowPanel({ value, onChange, periodOptions }: Pick<Props, 
 
             <div className="range-mode-row">
               <div className="mini-segmented" aria-label="Time input mode">
-                <button type="button" className={mode === "calendar" ? "active" : ""} onClick={() => setMode("calendar")}>
+                <button type="button" className={mode === "calendar" ? "active" : ""} onClick={() => onModeChange("calendar")}>
                   BCE/CE
                 </button>
-                <button type="button" className={mode === "bp" ? "active" : ""} onClick={() => setMode("bp")}>
+                <button type="button" className={mode === "bp" ? "active" : ""} onClick={() => onModeChange("bp")}>
                   BP
                 </button>
               </div>
@@ -440,27 +444,30 @@ export function TimeWindowPanel({ value, onChange, periodOptions }: Pick<Props, 
         </div>
 
         <div className="period-presets">
-            {presets.map((preset) => (
-              <button
-                key={preset.label}
-                className={preset.label === "Full"
-                  ? value.startYear === preset.startYear && value.endYear === preset.endYear ? "active" : ""
-                  : checkedPeriods.has(preset.label) ? "active" : ""}
-                type="button"
-                title={preset.label === "Full" ? "Full range" : `${preset.label}. Shift-click to select a continuous period range`}
-                onClick={(event) => {
-                  if (preset.label === "Full") {
-                    setLastPeriodClick(null);
-                    onChange({ startYear: preset.startYear, endYear: preset.endYear });
-                    return;
-                  }
-                  togglePeriod(preset.label, event.shiftKey);
-                }}
-              >
-                <span className="period-check" aria-hidden="true" />
-                <span className="period-label">{periodAbbreviation(preset.label)}</span>
-              </button>
-            ))}
+            {presets.map((preset) => {
+              const active = preset.label === "Full"
+                ? value.startYear === preset.startYear && value.endYear === preset.endYear
+                : checkedPeriods.has(preset.label);
+              return (
+                <button
+                  key={preset.label}
+                  className={[active ? "active" : "", active && preset.label !== "Full" ? "state-active" : ""].filter(Boolean).join(" ")}
+                  type="button"
+                  title={preset.label === "Full" ? "Full range" : `${preset.label}. Shift-click to select a continuous period range`}
+                  onClick={(event) => {
+                    if (preset.label === "Full") {
+                      setLastPeriodClick(null);
+                      onChange({ startYear: preset.startYear, endYear: preset.endYear });
+                      return;
+                    }
+                    togglePeriod(preset.label, event.shiftKey);
+                  }}
+                >
+                  <span className="period-check" aria-hidden="true" />
+                  <span className="period-label">{periodAbbreviation(preset.label)}</span>
+                </button>
+              );
+            })}
         </div>
       </div>
     </div>

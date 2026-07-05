@@ -480,6 +480,19 @@ button:disabled {
   color: var(--text);
 }
 
+.button.state-active,
+.button.state-active.active {
+  border-color: #8cb5e8;
+  background: #eaf3ff;
+  color: #164c8f;
+}
+
+.button.state-active:hover {
+  border-color: #6f9edb;
+  background: #deecff;
+  color: #103f75;
+}
+
 .button.primary {
   background: var(--text);
   border-color: var(--text);
@@ -743,48 +756,50 @@ button:disabled {
 
 .time-window-panel .range-panel {
   display: grid;
-  grid-template-rows: auto minmax(52px, 1fr) auto;
+  grid-template-rows: auto 62px auto;
+  row-gap: 1px;
   padding: 6px 12px 5px;
 }
 
 .time-window-panel .range-shell {
-  height: 54px;
+  height: 62px;
   margin-top: 0;
 }
 
 .time-window-panel .range-input,
 .time-window-panel .range-input::-webkit-slider-runnable-track,
 .time-window-panel .range-input::-moz-range-track {
-  height: 50px;
+  height: 60px;
 }
 
 .time-window-panel .range-ticks {
-  top: 43px;
+  top: 35px;
 }
 
 .time-window-panel .range-handle-marker {
-  top: 30px;
+  top: 25px;
   width: 15px;
   height: 22px;
 }
 
 .time-window-panel .range-track,
 .time-window-panel .range-fill {
-  top: 28px;
+  top: 23px;
 }
 
 .time-window-panel .range-shell::before {
-  top: 11px;
+  top: 7px;
 }
 
 .time-window-panel .range-input::-webkit-slider-thumb {
-  margin-top: 36px;
+  margin-top: 31px;
 }
 
 .range-mode-row {
   display: flex;
+  align-items: center;
   justify-content: center;
-  min-height: 27px;
+  min-height: 25px;
 }
 
 .range-mode-row .mini-segmented {
@@ -953,6 +968,7 @@ button:disabled {
 .time-window-panel .range-ticks span {
   color: #8f8b82;
   font-size: 10.5px;
+  gap: 2px;
 }
 
 .time-window-panel .range-ticks em {
@@ -1215,6 +1231,17 @@ button:disabled {
   color: #252521;
 }
 
+.period-presets button.state-active {
+  border-color: #8cb5e8;
+  background: #eaf3ff;
+  color: #164c8f;
+}
+
+.period-presets button.state-active .period-check {
+  border-color: #164c8f;
+  background: #164c8f;
+}
+
 .period-check {
   position: relative;
   width: 13px;
@@ -1228,6 +1255,11 @@ button:disabled {
 .period-presets button.active .period-check {
   border-color: #2f2f2d;
   background: #2f2f2d;
+}
+
+.period-presets button.active.state-active .period-check {
+  border-color: #164c8f;
+  background: #164c8f;
 }
 
 .period-presets button.active .period-check::after {
@@ -1610,6 +1642,36 @@ button:disabled {
   min-height: 34px;
   border-radius: 6px;
   background: var(--panel);
+}
+
+.profile-select-panel {
+  min-width: 0;
+  width: 100%;
+}
+
+.settings-button-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.settings-button-grid .button,
+.settings-wide-button {
+  justify-content: flex-start;
+}
+
+.settings-wide-button {
+  width: 100%;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .settings-segmented {

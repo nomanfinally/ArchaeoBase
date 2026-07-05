@@ -49,6 +49,7 @@ export type MapCacheSourceRow = {
   group_id: string | null;
   locality: string | null;
   political_entity: string | null;
+  regions: string | null;
   date_mean_bp: number | null;
   date_mean_year_ce: number | null;
   coverage_1150k: number | null;
@@ -75,6 +76,7 @@ export type SampleMapCacheRecord = {
   group_site_key: string | null;
   locality: string | null;
   political_entity: string | null;
+  regions: string | null;
   date_mean_bp: number | null;
   date_mean_year_ce: number | null;
   coverage_1150k: number | null;
@@ -142,6 +144,7 @@ export type GroupMapCacheRecord = {
   group_site_key: string;
   release_id: string;
   group_id: string | null;
+  regions: string | null;
   site_cluster_id: string;
   full_sample_count: number;
   centroid_latitude: number;
@@ -403,6 +406,11 @@ function groupKey(row: { id: string | number; genetic_id: string | null; group_i
 
 function stableSortKey(row: { id: string | number; genetic_id: string | null; group_id: string | null }) {
   return `${row.group_id ?? ""}:${row.genetic_id ?? ""}:${row.id}`;
+}
+
+function distinctText(values: Array<string | null | undefined>) {
+  const unique = Array.from(new Set(values.map((value) => asText(value).trim()).filter(Boolean))).sort();
+  return unique.length ? unique.join(", ") : null;
 }
 
 const commonGroupSuffixes = new Set([
@@ -1161,6 +1169,7 @@ function cacheRecordForSample(row: WorkingSample, domains: Record<MapGradientBy,
     group_site_key: row.group_site_key,
     locality: row.locality,
     political_entity: row.political_entity,
+    regions: row.regions,
     date_mean_bp: row.date_mean_bp,
     date_mean_year_ce: row.date_mean_year_ce,
     coverage_1150k: row.coverage_1150k,
@@ -1243,6 +1252,7 @@ function cacheRecordForGroup(site: SiteCluster, releaseId: string, domains: Reco
     group_site_key: site.groupSiteKey,
     release_id: releaseId,
     group_id: site.groupId,
+    regions: distinctText(sourceRows.map((row) => row.regions)),
     site_cluster_id: site.siteClusterId,
     full_sample_count: site.rows.length,
     centroid_latitude: site.latitude,
@@ -1480,6 +1490,7 @@ const sampleCacheColumns: Array<keyof SampleMapCacheRecord> = [
   "group_site_key",
   "locality",
   "political_entity",
+  "regions",
   "date_mean_bp",
   "date_mean_year_ce",
   "coverage_1150k",
@@ -1547,6 +1558,7 @@ const groupCacheColumns: Array<keyof GroupMapCacheRecord> = [
   "group_site_key",
   "release_id",
   "group_id",
+  "regions",
   "site_cluster_id",
   "full_sample_count",
   "centroid_latitude",
@@ -1657,6 +1669,7 @@ export async function rebuildMapCache(pool: Pool, options: MapRebuildOptions = {
           group_id,
           locality,
           political_entity,
+          regions,
           date_mean_bp,
           date_mean_year_ce,
           coverage_1150k,

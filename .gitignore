@@ -19,7 +19,8 @@ coverage/
 .local/
 
 # Raw/generated data should be imported, not committed.
-data/
+data/*
+!data/political_entity_regions.csv
 imports/
 exports/
 dumps/

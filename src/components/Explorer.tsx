@@ -35,6 +35,7 @@ import {
   TimeWindow,
   TimeWindowPanel,
   validStoredPeriods,
+  type TimeMode,
   type PeriodOption,
   type TimeWindowValue
 } from "./TimeWindow";
@@ -74,12 +75,13 @@ const MAX_SORT_RULES = 8;
 const DEFAULT_PANEL_WIDTH = 420;
 const MIN_PANEL_WIDTH = 320;
 const MAX_PANEL_WIDTH = 720;
+const CSV_EXPORT_PAGE_SIZE = 500;
 
 function formatCount(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
-function normalizeRows(rows: Record<string, unknown>[], entity: Entity) {
+function normalizeRows(rows: Record<string, unknown>[], entity: Entity): Record<string, unknown>[] {
   if (entity === "sample") return rows;
   return rows.map((row) => ({
     ...row,
@@ -134,6 +136,16 @@ function emptyProfile(name = "Default View"): ProfileFile {
     activeView: name,
     views: []
   };
+}
+
+function csvValue(value: unknown) {
+  if (value === null || value === undefined) return "";
+  const text = Array.isArray(value)
+    ? value.join("; ")
+    : typeof value === "object"
+      ? JSON.stringify(value)
+      : String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
 function countConditions(node: FilterNode): number {
@@ -197,10 +209,12 @@ export function Explorer() {
   const [total, setTotal] = useState(0);
   const [releaseName, setReleaseName] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [csvExporting, setCsvExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runs, setRuns] = useState<AdmixtureRun[]>([]);
   const [admixtureRunId, setAdmixtureRunId] = useState<number | null>(null);
   const [timeWindow, setTimeWindow] = useState<TimeWindowValue>(fullTimeWindow);
+  const [timeMode, setTimeMode] = useState<TimeMode>("calendar");
   const [periodOptions, setPeriodOptions] = useState<PeriodOption[]>(defaultPeriodOptions);
   const [periodOptionsHydrated, setPeriodOptionsHydrated] = useState(false);
   const [mapBaseStyle, setMapBaseStyle] = useState<MapBaseStyle>("light");
@@ -281,6 +295,7 @@ export function Explorer() {
         field: searchField
       },
       timeWindow,
+      timeMode,
       periods: periodOptions,
       admixtureRunId,
       pageSize,
@@ -321,6 +336,7 @@ export function Explorer() {
     setGlobalSearch(view.search?.query ?? "");
     setSearchField(view.search?.field ?? "group_id");
     if (view.timeWindow) setTimeWindow(view.timeWindow);
+    setTimeMode(view.timeMode === "bp" ? "bp" : "calendar");
     if (view.periods?.length) setPeriodOptions(view.periods);
     setAdmixtureRunId(view.admixtureRunId ?? null);
     setPageSize(view.pageSize && view.pageSize > 0 ? view.pageSize : 100);
@@ -391,6 +407,7 @@ export function Explorer() {
     globalSearch,
     searchField,
     timeWindow,
+    timeMode,
     periodOptions,
     admixtureRunId,
     pageSize,
@@ -540,6 +557,32 @@ export function Explorer() {
     setPage(1);
   }
 
+  function resetCurrentView() {
+    if (!schema) return;
+    setFilterDraft(emptyFilter);
+    setFilter(emptyFilter);
+    setSorting([]);
+    setVisibleColumns({ sample: schema.defaults.sample, group: schema.defaults.group });
+    setColumnWidths({ sample: {}, group: {} });
+    setGlobalSearch("");
+    setSearchField("group_id");
+    setTimeWindow(fullTimeWindow);
+    setTimeMode("calendar");
+    setAdmixtureRunId(null);
+    setPageSize(100);
+    setMapBaseStyle("light");
+    setMapColorMode("fixed");
+    setMapColorBy("sex");
+    setMapGradientBy("snp_1240k");
+    setMapPresentation("sample_cloud");
+    setMapShowGroupCounts(true);
+    setMapShowOutlierLinks(false);
+    setMapShowCentroids(true);
+    setMapShowLegend(true);
+    setMapProjectionMode("flat");
+    setPage(1);
+  }
+
   const shownFields = activeFields;
   const hiddenFields = allFields.filter((field) => !visibleColumns[entity]?.includes(field.id));
   const sortableFields = allFields.filter((field) => field.sortable !== false);
@@ -683,6 +726,63 @@ export function Explorer() {
     const link = document.createElement("a");
     link.href = url;
     link.download = `${activeProfileName.replace(/[^a-z0-9_-]+/gi, "_").toLowerCase()}${PROFILE_FILE_EXTENSION}`;
+    link.click();
+    window.URL.revokeObjectURL(url);
+  }
+
+  async function exportCurrentTableCsv() {
+    const exportFields = [...activeFields];
+    const includeAdmixture = admixtureRunId !== null;
+    const headers = [...exportFields.map((field) => field.label), ...(includeAdmixture ? ["ADMIXTURE"] : [])];
+    const sort = sortingToSortSpecs(sorting);
+    const exportFilter = combineWithTimeWindow(filter, timeWindow);
+    const exportedRows: Record<string, unknown>[] = [];
+    setCsvExporting(true);
+    try {
+      for (let exportPage = 1; ; exportPage += 1) {
+        const response = await fetch("/api/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            entity,
+            view: "table",
+            filter: exportFilter,
+            globalSearch,
+            searchField,
+            sort,
+            page: exportPage,
+            pageSize: CSV_EXPORT_PAGE_SIZE,
+            admixtureRunId,
+            mapBounds: null
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error ?? "CSV export failed");
+        const nextRows = normalizeRows(data.rows ?? [], entity);
+        exportedRows.push(...nextRows);
+        const nextTotal = Number(data.total ?? exportedRows.length);
+        if (!nextRows.length || exportedRows.length >= nextTotal) break;
+      }
+    } catch (exportError) {
+      window.alert(exportError instanceof Error ? exportError.message : "CSV export failed.");
+      return;
+    } finally {
+      setCsvExporting(false);
+    }
+
+    const lines = [
+      headers.map(csvValue).join(","),
+      ...exportedRows.map((row) => [
+        ...exportFields.map((field) => csvValue(row[field.id])),
+        ...(includeAdmixture ? [csvValue(row.admixture)] : [])
+      ].join(","))
+    ];
+    const blob = new Blob([`${lines.join("\n")}\n`], { type: "text/csv;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const date = new Date().toISOString().slice(0, 10);
+    link.href = url;
+    link.download = `archaebase_${entity}_table_${date}.csv`;
     link.click();
     window.URL.revokeObjectURL(url);
   }
@@ -849,44 +949,32 @@ export function Explorer() {
       </header>
 
       <div className={`toolbar ${isSearchExpanded ? "search-expanded" : ""}`}>
-        <div className="toolbar-section profile-control">
-          <select className="select profile-select" value={activeProfileName} onChange={(event) => switchProfile(event.target.value)} aria-label="Profile">
-            {profiles.views.length ? (
-              profiles.views.map((profile) => (
-                <option key={profile.name} value={profile.name}>
-                  {profile.name}
-                </option>
-              ))
-            ) : (
-              <option value={activeProfileName}>{activeProfileName}</option>
-            )}
-          </select>
-          <button className="icon-button" type="button" onClick={createProfile} title="New profile" aria-label="New profile">
-            <Plus size={15} />
-          </button>
-          <button className="icon-button" type="button" onClick={duplicateProfile} title="Duplicate profile" aria-label="Duplicate profile">
-            <Copy size={15} />
-          </button>
-          <button className="icon-button" type="button" onClick={renameProfile} title="Rename profile" aria-label="Rename profile">
-            <Edit3 size={15} />
-          </button>
-          <button className="icon-button" type="button" onClick={() => profileImportRef.current?.click()} title="Import profiles" aria-label="Import profiles">
-            <Upload size={15} />
-          </button>
-          <button className="icon-button" type="button" onClick={exportProfiles} title="Export profiles" aria-label="Export profiles">
-            <Download size={15} />
-          </button>
-          <input
-            ref={profileImportRef}
-            type="file"
-            accept=".yml,.yaml,.archaebase.yml"
-            hidden
-            onChange={(event) => void importProfiles(event.target.files?.[0])}
-          />
-        </div>
+        <button
+          className={`button icon-label toolbar-action ${panelMode === "settings" ? "active" : ""}`}
+          type="button"
+          onClick={() => setPanelMode((current) => (current === "settings" ? null : "settings"))}
+          aria-expanded={panelMode === "settings"}
+          title="Settings"
+        >
+          <Settings2 size={15} />
+          <span className="toolbar-label">Settings</span>
+        </button>
+
+        <TimeWindow
+          value={timeWindow}
+          periodOptions={periodOptions}
+          mode={timeMode}
+          open={timePanelOpen}
+          onOpenChange={setTimePanelOpen}
+          onModeChange={setTimeMode}
+          onChange={(next) => {
+            setTimeWindow(next);
+            setPage(1);
+          }}
+        />
 
         <button
-          className={`button icon-label toolbar-action ${panelMode === "filters" ? "active" : ""}`}
+          className={`button icon-label toolbar-action ${panelMode === "filters" ? "active" : ""} ${appliedFilterCount ? "state-active" : ""}`}
           type="button"
           onClick={() => setPanelMode((current) => (current === "filters" ? null : "filters"))}
           aria-expanded={panelMode === "filters"}
@@ -897,7 +985,7 @@ export function Explorer() {
         </button>
 
         <button
-          className={`button icon-label toolbar-action ${panelMode === "sort" ? "active" : ""}`}
+          className={`button icon-label toolbar-action ${panelMode === "sort" ? "active" : ""} ${sorting.length ? "state-active" : ""}`}
           type="button"
           onClick={() => setPanelMode((current) => (current === "sort" ? null : "sort"))}
           aria-expanded={panelMode === "sort"}
@@ -905,28 +993,6 @@ export function Explorer() {
         >
           <ArrowUpDown size={15} />
           <span className="toolbar-label">Sort{sorting.length ? ` ${sorting.length}` : ""}</span>
-        </button>
-
-        <button
-          className={`button icon-label toolbar-action ${panelMode === "columns" ? "active" : ""}`}
-          type="button"
-          onClick={() => setPanelMode((current) => (current === "columns" ? null : "columns"))}
-          aria-expanded={panelMode === "columns"}
-          title="Properties"
-        >
-          <Columns3 size={15} />
-          <span className="toolbar-label">Properties</span>
-        </button>
-
-        <button
-          className={`button icon-label toolbar-action ${panelMode === "settings" ? "active" : ""}`}
-          type="button"
-          onClick={() => setPanelMode((current) => (current === "settings" ? null : "settings"))}
-          aria-expanded={panelMode === "settings"}
-          title="Settings"
-        >
-          <Settings2 size={15} />
-          <span className="toolbar-label">Settings</span>
         </button>
 
         <div className="toolbar-section search-control">
@@ -974,6 +1040,17 @@ export function Explorer() {
           </select>
         </div>
 
+        <button
+          className={`button icon-label toolbar-action ${panelMode === "columns" ? "active" : ""}`}
+          type="button"
+          onClick={() => setPanelMode((current) => (current === "columns" ? null : "columns"))}
+          aria-expanded={panelMode === "columns"}
+          title="Properties"
+        >
+          <Columns3 size={15} />
+          <span className="toolbar-label">Properties</span>
+        </button>
+
         <select
           className="select admixture-select"
           value={admixtureRunId ?? ""}
@@ -989,23 +1066,14 @@ export function Explorer() {
           ))}
         </select>
 
-        <TimeWindow
-          value={timeWindow}
-          periodOptions={periodOptions}
-          open={timePanelOpen}
-          onOpenChange={setTimePanelOpen}
-          onChange={(next) => {
-            setTimeWindow(next);
-            setPage(1);
-          }}
-        />
-
       </div>
 
       {timePanelOpen ? (
         <TimeWindowPanel
           value={timeWindow}
           periodOptions={periodOptions}
+          mode={timeMode}
+          onModeChange={setTimeMode}
           onChange={(next) => {
             setTimeWindow(next);
             setPage(1);
@@ -1154,123 +1222,178 @@ export function Explorer() {
 
           {panelMode === "settings" ? (
             <section>
-              {viewMode === "map" ? (
-                <div className="settings-stack">
-                  <div className="settings-block">
-                    <span className="settings-title">Marker Styling</span>
-                    <div className="settings-row">
-                      <span>Color scale</span>
-                      <div className="settings-segmented compact">
-                        <button
-                          className={mapColorMode === "fixed" ? "active" : ""}
-                          type="button"
-                          onClick={() => setMapColorMode("fixed")}
-                        >
-                          Categorical
-                        </button>
-                        <button
-                          className={mapColorMode === "gradient" ? "active" : ""}
-                          type="button"
-                          onClick={() => setMapColorMode("gradient")}
-                        >
-                          Gradient
-                        </button>
-                      </div>
-                    </div>
-                    {mapColorMode === "fixed" ? (
-                      <label className="settings-row">
-                        <span>Field</span>
-                        <select className="select" value={mapColorBy} onChange={(event) => setMapColorBy(event.target.value as MapColorBy)}>
-                          {mapFixedColorOptions.map((option) => (
-                            <option key={option.id} value={option.id}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : (
-                      <label className="settings-row">
-                        <span>Field</span>
-                        <select className="select" value={mapGradientBy} onChange={(event) => setMapGradientBy(event.target.value as MapGradientBy)}>
-                          {mapGradientOptions.map((option) => (
-                            <option key={option.id} value={option.id}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    )}
-                  </div>
-                  <div className="settings-block">
-                    <span className="settings-title">Display</span>
-                    <label className={`settings-row ${mapPresentation !== "group_locations" ? "disabled" : ""}`}>
-                      <span>Group count labels</span>
-                      <input
-                        type="checkbox"
-                        checked={mapShowGroupCounts}
-                        disabled={mapPresentation !== "group_locations"}
-                        onChange={(event) => setMapShowGroupCounts(event.target.checked)}
-                      />
-                    </label>
-                    <label className="settings-row">
-                      <span>Show outlier links</span>
-                      <input type="checkbox" checked={mapShowOutlierLinks} onChange={(event) => setMapShowOutlierLinks(event.target.checked)} />
-                    </label>
-                    <label className="settings-row">
-                      <span>Show centroids</span>
-                      <input type="checkbox" checked={mapShowCentroids} onChange={(event) => setMapShowCentroids(event.target.checked)} />
-                    </label>
-                    <label className="settings-row">
-                      <span>Legend</span>
-                      <input type="checkbox" checked={mapShowLegend} onChange={(event) => setMapShowLegend(event.target.checked)} />
-                    </label>
-                  </div>
-                  <div className="settings-block">
-                    <span className="settings-title">Map Geometry</span>
-                    <div className="settings-row">
-                      <span>Projection</span>
-                      <div className="settings-segmented compact">
-                        <button
-                          className={mapProjectionMode === "flat" ? "active" : ""}
-                          type="button"
-                          onClick={() => setMapProjectionMode("flat")}
-                        >
-                          Flat
-                        </button>
-                        <button
-                          className={mapProjectionMode === "globe" ? "active" : ""}
-                          type="button"
-                          onClick={() => setMapProjectionMode("globe")}
-                        >
-                          Globe
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="settings-stack">
+              <div className="settings-stack">
+                <div className="settings-block">
+                  <span className="settings-title">Views</span>
                   <label className="settings-row">
-                    <span>Page Size</span>
-                    <select
-                      className="select"
-                      value={pageSize}
-                      onChange={(event) => {
-                        setPageSize(Number(event.target.value));
-                        setPage(1);
-                      }}
-                    >
-                      <option value={50}>50</option>
-                      <option value={100}>100</option>
-                      <option value={250}>250</option>
-                      <option value={500}>500</option>
+                    <span>View</span>
+                    <select className="select profile-select-panel" value={activeProfileName} onChange={(event) => switchProfile(event.target.value)}>
+                      {profiles.views.map((view) => (
+                        <option key={view.name} value={view.name}>
+                          {view.name}
+                        </option>
+                      ))}
                     </select>
                   </label>
+                  <div className="settings-button-grid">
+                    <button className="button" type="button" onClick={createProfile}>
+                      <Plus size={14} />
+                      New
+                    </button>
+                    <button className="button" type="button" onClick={duplicateProfile}>
+                      <Copy size={14} />
+                      Duplicate
+                    </button>
+                    <button className="button" type="button" onClick={renameProfile}>
+                      <Edit3 size={14} />
+                      Rename
+                    </button>
+                    <button className="button" type="button" onClick={() => profileImportRef.current?.click()}>
+                      <Upload size={14} />
+                      Import
+                    </button>
+                    <button className="button" type="button" onClick={exportProfiles}>
+                      <Download size={14} />
+                      Export
+                    </button>
+                    <button className="button" type="button" onClick={resetCurrentView}>
+                      <RefreshCw size={14} />
+                      Reset View
+                    </button>
+                  </div>
+                  <input
+                    ref={profileImportRef}
+                    className="visually-hidden"
+                    type="file"
+                    accept={`${PROFILE_FILE_EXTENSION},.yml,.yaml`}
+                    onChange={(event) => void importProfiles(event.target.files?.[0])}
+                  />
                 </div>
-              )}
-              <div className="settings-block">
-                <span className="settings-title">Period Boundaries</span>
-                <TimePeriodSettings periodOptions={periodOptions} onChange={setPeriodOptions} />
+
+                {viewMode === "table" ? (
+                  <div className="settings-block">
+                    <span className="settings-title">Table</span>
+                    <label className="settings-row">
+                      <span>Page Size</span>
+                      <select
+                        className="select"
+                        value={pageSize}
+                        onChange={(event) => {
+                          setPageSize(Number(event.target.value));
+                          setPage(1);
+                        }}
+                      >
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
+                        <option value={250}>250</option>
+                        <option value={500}>500</option>
+                      </select>
+                    </label>
+                    <button className="button settings-wide-button" type="button" onClick={() => void exportCurrentTableCsv()} disabled={csvExporting}>
+                      <Download size={14} />
+                      {csvExporting ? "Exporting all rows" : "Export all rows CSV"}
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="settings-block">
+                      <span className="settings-title">Marker Styling</span>
+                      <div className="settings-row">
+                        <span>Color scale</span>
+                        <div className="settings-segmented compact">
+                          <button
+                            className={mapColorMode === "fixed" ? "active" : ""}
+                            type="button"
+                            onClick={() => setMapColorMode("fixed")}
+                          >
+                            Categorical
+                          </button>
+                          <button
+                            className={mapColorMode === "gradient" ? "active" : ""}
+                            type="button"
+                            onClick={() => setMapColorMode("gradient")}
+                          >
+                            Gradient
+                          </button>
+                        </div>
+                      </div>
+                      {mapColorMode === "fixed" ? (
+                        <label className="settings-row">
+                          <span>Field</span>
+                          <select className="select" value={mapColorBy} onChange={(event) => setMapColorBy(event.target.value as MapColorBy)}>
+                            {mapFixedColorOptions.map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : (
+                        <label className="settings-row">
+                          <span>Field</span>
+                          <select className="select" value={mapGradientBy} onChange={(event) => setMapGradientBy(event.target.value as MapGradientBy)}>
+                            {mapGradientOptions.map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                    </div>
+                    <div className="settings-block">
+                      <span className="settings-title">Display</span>
+                      <label className={`settings-row ${mapPresentation !== "group_locations" ? "disabled" : ""}`}>
+                        <span>Group count labels</span>
+                        <input
+                          type="checkbox"
+                          checked={mapShowGroupCounts}
+                          disabled={mapPresentation !== "group_locations"}
+                          onChange={(event) => setMapShowGroupCounts(event.target.checked)}
+                        />
+                      </label>
+                      <label className="settings-row">
+                        <span>Show outlier links</span>
+                        <input type="checkbox" checked={mapShowOutlierLinks} onChange={(event) => setMapShowOutlierLinks(event.target.checked)} />
+                      </label>
+                      <label className="settings-row">
+                        <span>Show centroids</span>
+                        <input type="checkbox" checked={mapShowCentroids} onChange={(event) => setMapShowCentroids(event.target.checked)} />
+                      </label>
+                      <label className="settings-row">
+                        <span>Legend</span>
+                        <input type="checkbox" checked={mapShowLegend} onChange={(event) => setMapShowLegend(event.target.checked)} />
+                      </label>
+                    </div>
+                    <div className="settings-block">
+                      <span className="settings-title">Map Geometry</span>
+                      <div className="settings-row">
+                        <span>Projection</span>
+                        <div className="settings-segmented compact">
+                          <button
+                            className={mapProjectionMode === "flat" ? "active" : ""}
+                            type="button"
+                            onClick={() => setMapProjectionMode("flat")}
+                          >
+                            Flat
+                          </button>
+                          <button
+                            className={mapProjectionMode === "globe" ? "active" : ""}
+                            type="button"
+                            onClick={() => setMapProjectionMode("globe")}
+                          >
+                            Globe
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                <div className="settings-block">
+                  <span className="settings-title">Period Boundaries</span>
+                  <TimePeriodSettings periodOptions={periodOptions} onChange={setPeriodOptions} />
+                </div>
               </div>
             </section>
           ) : null}

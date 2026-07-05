@@ -5,6 +5,7 @@ import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { rebuildMapCache } from "../src/lib/map/cache";
+import { applySampleRegions, loadRegionMappings } from "./regions";
 
 const { Pool } = pg;
 
@@ -169,6 +170,7 @@ async function main() {
       input: createReadStream(sourceFile, { encoding: "utf8" }),
       crlfDelay: Infinity
     });
+    const regionMappings = new Map((await loadRegionMappings()).map((mapping) => [mapping.politicalEntity, mapping.regions]));
 
     let headers: (string | null)[] | null = null;
     let releaseId: string | null = null;
@@ -207,11 +209,13 @@ async function main() {
       const longitude = row.longitude as number | null;
       const hasCoordinates = latitude !== null && longitude !== null;
       const dateMeanYearCe = dateMeanBp === null ? null : 1950 - dateMeanBp;
+      const regions = regionMappings.get(row.political_entity as string | null) ?? null;
 
       const columns = [
         "release_id",
         "row_number",
         ...AADR_FIELD_KEYS,
+        "regions",
         "date_mean_year_ce",
         "has_coordinates",
         "geom"
@@ -221,6 +225,7 @@ async function main() {
         releaseId,
         rowCount + 1,
         ...AADR_FIELD_KEYS.map((key) => row[key]),
+        regions,
         dateMeanYearCe,
         hasCoordinates
       ];
@@ -258,6 +263,7 @@ async function main() {
       rowCount,
       releaseId
     ]);
+    await applySampleRegions(client);
     await client.query("REFRESH MATERIALIZED VIEW sample_map_points");
     await client.query("COMMIT");
     const cacheResult = await rebuildMapCache(pool, { releaseId });

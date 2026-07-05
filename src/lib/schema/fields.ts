@@ -67,6 +67,7 @@ export const sampleFields = [
   sampleField("y_hap_isogg", "Y Haplogroup ISOGG", "text", { defaultVisible: true }),
   sampleField("mtdna_haplogroup", "mtDNA Haplogroup", "text", { defaultVisible: true }),
   sampleField("political_entity", "Political Entity", "enum", { defaultVisible: true }),
+  sampleField("regions", "Regions", "enum", { defaultVisible: true }),
   sampleField("locality", "Locality", "text", { defaultVisible: true }),
   sampleField("suffixes", "Suffices", "enum", { defaultVisible: true }),
   sampleField("snp_1240k", "SNPs 1240k", "number", { defaultVisible: true }),
@@ -78,7 +79,7 @@ export const sampleFields = [
   sampleField("longitude", "Longitude", "number"),
   {
     id: "period",
-    label: "Period",
+    label: "Period Name",
     kind: "enum",
     sampleColumn: PERIOD_SAMPLE_COLUMN,
     defaultVisible: true,
@@ -121,6 +122,14 @@ export const groupFields = [
     sortable: true
   },
   {
+    id: "regions",
+    label: "Regions",
+    kind: "text",
+    groupColumn: "g.regions_text",
+    defaultVisible: true,
+    sortable: true
+  },
+  {
     id: "localities",
     label: "Localities",
     kind: "text",
@@ -154,7 +163,7 @@ export const groupFields = [
   },
   {
     id: "period_names",
-    label: "Periods",
+    label: "Period Names",
     kind: "text",
     groupColumn: "g.period_names",
     defaultVisible: true,

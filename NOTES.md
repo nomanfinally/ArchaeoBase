@@ -18,3 +18,10 @@
 - Population-cluster marker colors normalize known AADR suffix tokens such as `.AG`, `.TW`, and `.AG.TW` before assigning colors, so suffix-only data-type variants of the same group receive the same cached population color.
 - `Age BP (split)` is intentionally not a calibrated-width numeric scale in the legend. The four macro segments are equal width so labels remain readable; tick marks inside each segment show which period/subperiod belongs to that color range.
 - Population-cluster styling uses a capped palette of 12 colors. The cache still assigns nearby groups divergent colors when possible, but the legend is aggregated by color class instead of listing every group ID.
+
+## Regions And View State
+
+- `samples.regions` is a derived research column, not source AADR data. It is populated from `data/political_entity_regions.csv` by `npm run db:regions` and during AADR import.
+- Region categories are `Africa`, `Asia`, `Europe`, `North America`, `South America`, `Oceania`, and `Unknown`. The mapping follows UNSD M49 regions/subregions where possible; Americas are split into North America and South America for explorer filtering.
+- The mapping CSV is intentionally tracked even though the rest of `data/` is ignored, because import and backfill scripts depend on it.
+- The explorer keeps active view state in browser local storage and profile YAML. The time-window display mode (`BCE/CE` or `BP`) is persisted with the rest of the view so reopening the period panel preserves the user's mode.

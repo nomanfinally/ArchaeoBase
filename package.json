@@ -15,6 +15,7 @@
     "pg:status": "bash scripts/pg-local.sh status",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:rebuild-map": "tsx scripts/rebuild-map-points.ts",
+    "db:tune-map": "tsx scripts/tune-map-cache.ts",
     "import:aadr": "tsx scripts/import-aadr.ts",
     "import:admixture": "tsx scripts/import-admixture.ts"
   },

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Feature, FeatureCollection, LineString, Point } from "geojson";
 import type { GeoJSONSource, IControl, Map as MapLibreMap, MapMouseEvent, Popup, StyleSpecification } from "maplibre-gl";
-import { Globe2, Map as MapIcon, Moon, Route, Satellite, Sun } from "lucide-react";
+import { Eye, EyeOff, Globe2, Map as MapIcon, Moon, Route, Satellite, Sun } from "lucide-react";
 import type { FilterNode } from "@/lib/filters/types";
 import type {
   MapColorBy,
@@ -35,6 +35,7 @@ type Props = {
   combineNearbyGroups: boolean;
   showGroupCounts: boolean;
   showOutlierLinks: boolean;
+  showCentroids: boolean;
   showLegend: boolean;
   projectionMode: MapProjectionMode;
   onProjectionModeChange: (mode: MapProjectionMode) => void;
@@ -47,6 +48,7 @@ const LINE_SOURCE_ID = "archaebase-map-lines";
 const DISPLACEMENT_LINE_LAYER_ID = "archaebase-displacement-lines";
 const OUTLIER_LINE_LAYER_ID = "archaebase-outlier-lines";
 const POINT_LAYER_ID = "archaebase-map-point-circles";
+const CENTROID_LAYER_ID = "archaebase-map-centroids";
 const POINT_LABEL_LAYER_ID = "archaebase-map-point-labels";
 const BOUNDARY_SOURCE_ID = "archaebase-boundaries";
 const COUNTRY_BOUNDARY_LAYER_ID = "archaebase-country-boundaries";
@@ -79,6 +81,7 @@ const mapBaseStyleIcons: Record<MapBaseStyle, typeof Sun> = {
 export const mapFixedColorOptions: { id: MapColorBy; label: string }[] = [
   { id: "single", label: "Single color" },
   { id: "sex", label: "Molecular sex" },
+  { id: "group_cluster", label: "Population cluster" },
   { id: "y_haplogroup_initial", label: "Y-DNA first letter" },
   { id: "mtdna_initial", label: "mtDNA first letter" },
   { id: "period", label: "Period" }
@@ -87,7 +90,8 @@ export const mapFixedColorOptions: { id: MapColorBy; label: string }[] = [
 export const mapGradientOptions: { id: MapGradientBy; label: string }[] = [
   { id: "snp_1240k", label: "SNPs 1240k" },
   { id: "snp_2m", label: "SNPs 2M" },
-  { id: "date_mean_bp", label: "Age BP" }
+  { id: "date_mean_bp", label: "Age BP" },
+  { id: "smart_date_mean_bp", label: "Age BP (split)" }
 ];
 
 function esriTileUrl(service: string) {
@@ -309,6 +313,7 @@ function ensureMapLayers(
       id: POINT_LAYER_ID,
       type: "circle",
       source: POINT_SOURCE_ID,
+      filter: ["!=", ["get", "kind"], "centroid"],
       paint: {
         "circle-color": ["coalesce", ["get", "markerColor"], "#2f6f4f"],
         "circle-radius": [
@@ -322,6 +327,27 @@ function ensureMapLayers(
         "circle-stroke-color": ["case", ["==", ["get", "isUnknownColor"], true], "#ffffff", "#ffffff"],
         "circle-stroke-width": ["case", ["==", ["get", "isUnknownColor"], true], 1.35, ["==", ["get", "kind"], "sample"], 0.5, 0.65],
         "circle-opacity": ["case", ["==", ["get", "kind"], "sample"], 0.86, 0.92]
+      }
+    });
+  }
+
+  if (!map.getLayer(CENTROID_LAYER_ID)) {
+    map.addLayer({
+      id: CENTROID_LAYER_ID,
+      type: "symbol",
+      source: POINT_SOURCE_ID,
+      filter: ["==", ["get", "kind"], "centroid"],
+      layout: {
+        "text-field": "x",
+        "text-font": ["Noto Sans Regular"],
+        "text-size": 10,
+        "text-allow-overlap": true,
+        "text-ignore-placement": true
+      },
+      paint: {
+        "text-color": ["coalesce", ["get", "markerColor"], "#111827"],
+        "text-halo-width": 0,
+        "text-opacity": 0.86
       }
     });
   }
@@ -397,8 +423,8 @@ function popupRows(properties: MapPointProperties) {
 function hoverPopupHtml(properties: MapPointProperties) {
   const rows = popupRows(properties);
   const preferred = properties.kind === "sample"
-    ? ["Sample", "Date", "Sex", "Y-DNA", "mtDNA", "SNPs 1240k"]
-    : ["Samples", "Date span", "Countries", "Localities", "Y-DNA", "mtDNA", "Avg SNPs 1240k"];
+    ? ["Sample", "Date", "Period", "Sex", "Y-DNA", "mtDNA", "SNPs 1240k"]
+    : ["Samples", "Date span", "Periods", "Countries", "Localities", "Y-DNA", "mtDNA", "Avg SNPs 1240k"];
   const facts = preferred
     .map((label) => rows.find(([rowLabel]) => rowLabel === label))
     .filter((row): row is [string, string] => Boolean(row))
@@ -434,6 +460,15 @@ function visibleLineCollection(lines: FeatureCollection<LineString, MapLinePrope
   return {
     ...lines,
     features: lines.features.filter((feature) => feature.properties.kind !== "outlier")
+  };
+}
+
+function visiblePointCollection(points: FeatureCollection<Point, MapPointProperties> | undefined, showCentroids: boolean) {
+  if (!points) return emptyPointCollection;
+  if (showCentroids) return points;
+  return {
+    ...points,
+    features: points.features.filter((feature) => feature.properties.kind !== "centroid")
   };
 }
 
@@ -508,6 +543,7 @@ export function MapView({
   combineNearbyGroups,
   showGroupCounts,
   showOutlierLinks,
+  showCentroids,
   showLegend,
   projectionMode,
   onProjectionModeChange,
@@ -530,6 +566,7 @@ export function MapView({
   const [mapData, setMapData] = useState<MapQueryResponse | null>(null);
   const [currentZoomPercent, setCurrentZoomPercent] = useState(0);
   const [controlHost, setControlHost] = useState<HTMLElement | null>(null);
+  const [legendCollapsed, setLegendCollapsed] = useState(false);
 
   function syncSources(map = mapRef.current) {
     if (!map || !map.isStyleLoaded()) return;
@@ -541,7 +578,7 @@ export function MapView({
   }
 
   useEffect(() => {
-    pointsRef.current = mapData?.features ?? emptyPointCollection;
+    pointsRef.current = visiblePointCollection(mapData?.features, showCentroids);
     linesRef.current = visibleLineCollection(mapData?.leaderLines, showOutlierLinks);
     const map = mapRef.current;
     if (!map) return;
@@ -550,7 +587,7 @@ export function MapView({
       return;
     }
     map.once("idle", () => syncSources(map));
-  }, [mapData, showOutlierLinks]);
+  }, [mapData, showOutlierLinks, showCentroids]);
 
   useEffect(() => {
     baseStyleRef.current = baseStyle;
@@ -772,7 +809,7 @@ export function MapView({
   }, [filter, globalSearch, searchField, mapReady, presentation, combineNearbyGroups, colorBy, colorMode, gradientBy, showGroupCounts, onSummaryChange, onReviewChange]);
 
   const mapStatus = mapData?.summary;
-  const pointCount = mapData?.features.features.length ?? 0;
+  const pointCount = mapData?.features.features.filter((feature) => feature.properties.kind !== "centroid").length ?? 0;
   const statusPrimary = presentation === "group_locations" ? mapStatus?.renderedGroups ?? pointCount : mapStatus?.renderedSamples ?? pointCount;
   const statusLabel = presentation === "group_locations" ? "groups" : "samples";
 
@@ -804,7 +841,7 @@ export function MapView({
             controlHost
           )
         : null}
-      {showLegend ? <MapLegendPanel legend={mapData?.legend ?? null} /> : null}
+      {showLegend ? <MapLegendPanel legend={mapData?.legend ?? null} collapsed={legendCollapsed} onCollapsedChange={setLegendCollapsed} /> : null}
       {queryError ? (
         <div className="map-empty">
           <strong>Map query failed</strong>
@@ -825,36 +862,121 @@ function formatLegendCount(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
-function MapLegendPanel({ legend }: { legend: MapLegend | null }) {
+function MapLegendPanel({
+  legend,
+  collapsed,
+  onCollapsedChange
+}: {
+  legend: MapLegend | null;
+  collapsed: boolean;
+  onCollapsedChange: (collapsed: boolean) => void;
+}) {
   if (!legend) return null;
+  const legendClass = legend.kind === "gradient" ? "gradient" : "categorical";
+  if (collapsed) {
+    return (
+      <button
+        className={`map-legend-toggle map-legend-toggle-${legendClass}`}
+        type="button"
+        onClick={() => onCollapsedChange(false)}
+        title="Show legend"
+        aria-label="Show legend"
+      >
+        <Eye size={13} />
+        <span>Legend</span>
+      </button>
+    );
+  }
+
   if (legend.kind === "gradient") {
     const gradient = legend.stops.length
       ? `linear-gradient(90deg, ${legend.stops.map((stop, index) => `${stop.color} ${(index / Math.max(1, legend.stops.length - 1)) * 100}%`).join(", ")})`
       : "#64748b";
+    const segmented = Boolean(legend.segments?.length);
     return (
-      <div className="map-legend map-legend-gradient">
-        <strong>{legend.title}</strong>
-        <div className="map-gradient-bar" style={{ background: gradient }} />
-        <div className="map-gradient-ticks">
-          {legend.ticks.map((tick) => (
-            <span key={`${tick.value}:${tick.label}`}>{tick.label}</span>
-          ))}
+      <div className={`map-legend map-legend-gradient ${segmented ? "map-legend-segmented" : ""}`}>
+        <div className="map-legend-header">
+          <strong>{legend.title}</strong>
+          <button type="button" onClick={() => onCollapsedChange(true)} title="Hide legend" aria-label="Hide legend">
+            <EyeOff size={13} />
+          </button>
         </div>
+        {segmented ? (
+          <>
+            <div className="map-gradient-segments">
+              {legend.segments?.map((segment) => (
+                <div
+                  className="map-gradient-segment"
+                  key={`${segment.label}:${segment.min}:${segment.max}:bar`}
+                  style={{
+                    background: `linear-gradient(90deg, ${segment.startColor}, ${segment.endColor})`
+                  }}
+                  title={`${segment.label}: ${formatLegendCount(segment.count)} samples, ${segment.min.toLocaleString("en-US")} to ${segment.max.toLocaleString("en-US")} BP`}
+                >
+                  {segment.marks?.length ? (
+                    <div className="map-gradient-segment-ticks">
+                      {segment.marks.map((mark, index) => (
+                        <i
+                          key={`${segment.label}:${mark}:tick`}
+                          style={{ left: `${((index + 0.5) / segment.marks!.length) * 100}%` }}
+                          title={mark}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            <div className="map-gradient-segment-labels">
+              {legend.segments?.map((segment) => (
+                <div
+                  key={`${segment.label}:${segment.min}:${segment.max}:label`}
+                >
+                  <b>{segment.label}</b>
+                  {segment.marks?.length ? (
+                    <em
+                      className="map-gradient-period-labels"
+                      style={{ gridTemplateColumns: `repeat(${segment.marks.length}, minmax(0, 1fr))` }}
+                    >
+                      {segment.marks.map((mark) => (
+                        <i key={`${segment.label}:${mark}:label`}>{mark}</i>
+                      ))}
+                    </em>
+                  ) : segment.subLabel ? <em>{segment.subLabel}</em> : null}
+                  <small>{segment.max.toLocaleString("en-US")}-{segment.min.toLocaleString("en-US")} BP</small>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="map-gradient-bar" style={{ background: gradient }} />
+            <div className="map-gradient-ticks">
+              {legend.ticks.map((tick) => (
+                <span key={`${tick.value}:${tick.label}`}>{tick.label}</span>
+              ))}
+            </div>
+          </>
+        )}
         {legend.unknownCount ? <small>Unknown {formatLegendCount(legend.unknownCount)}</small> : null}
       </div>
     );
   }
 
   if (!legend.items.length) return null;
-  const expanded = legend.items.length > 12;
   return (
-    <div className={`map-legend ${expanded ? "map-legend-scroll" : ""}`}>
-      {expanded ? <strong>{legend.title}</strong> : null}
+    <div className="map-legend map-legend-categorical">
+      <div className="map-legend-header">
+        <strong>{legend.title}</strong>
+        <button type="button" onClick={() => onCollapsedChange(true)} title="Hide legend" aria-label="Hide legend">
+          <EyeOff size={13} />
+        </button>
+      </div>
       {legend.items.map((item) => (
         <span key={item.label} title={`${item.label}: ${formatLegendCount(item.count)}`}>
           <i style={{ background: item.color }} />
           {item.label}
-          {expanded ? <b>{formatLegendCount(item.count)}</b> : null}
+          <b>{formatLegendCount(item.count)}</b>
         </span>
       ))}
     </div>

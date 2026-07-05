@@ -16,3 +16,4 @@ This project is a web-based ancient DNA metadata explorer for AADR `.anno` data 
 12. Run `npm test` and `npm run build` after implementation changes whenever dependencies are installed.
 13. Use clear, professional, compact UI labels. Avoid joke, filler, or awkward control names; choose concise academic wording for user-facing text.
 14. Keep updating .gitignore and .gitattribute so that unrequired files dont get tracked and committed.
+15. Keep a project `NOTES.md` file for architectural decisions and map/cache calibration notes. When implementing non-obvious behavior, record why it exists and what was changed.

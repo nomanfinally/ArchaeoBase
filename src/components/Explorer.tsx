@@ -210,6 +210,7 @@ export function Explorer() {
   const [mapPresentation, setMapPresentation] = useState<MapPresentation>("sample_cloud");
   const [mapShowGroupCounts, setMapShowGroupCounts] = useState(true);
   const [mapShowOutlierLinks, setMapShowOutlierLinks] = useState(false);
+  const [mapShowCentroids, setMapShowCentroids] = useState(true);
   const [mapShowLegend, setMapShowLegend] = useState(true);
   const [mapProjectionMode, setMapProjectionMode] = useState<MapProjectionMode>("flat");
   const [mapTotal, setMapTotal] = useState(0);
@@ -291,6 +292,7 @@ export function Explorer() {
         presentation: mapPresentation,
         showGroupCounts: mapShowGroupCounts,
         showOutlierLinks: mapShowOutlierLinks,
+        showCentroids: mapShowCentroids,
         showLegend: mapShowLegend,
         projectionMode: mapProjectionMode
       },
@@ -329,6 +331,7 @@ export function Explorer() {
     setMapPresentation((view.map?.presentation as MapPresentation) ?? "sample_cloud");
     setMapShowGroupCounts(view.map?.showGroupCounts !== false);
     setMapShowOutlierLinks(Boolean(view.map?.showOutlierLinks));
+    setMapShowCentroids(view.map?.showCentroids !== false);
     setMapShowLegend(view.map?.showLegend !== false);
     setMapProjectionMode((view.map?.projectionMode as MapProjectionMode) ?? "flat");
     setPanelWidth(clampPanelWidth(view.panel?.rightWidth ?? DEFAULT_PANEL_WIDTH));
@@ -398,6 +401,7 @@ export function Explorer() {
     mapPresentation,
     mapShowGroupCounts,
     mapShowOutlierLinks,
+    mapShowCentroids,
     mapShowLegend,
     mapProjectionMode,
     panelWidth,
@@ -1213,6 +1217,10 @@ export function Explorer() {
                       <input type="checkbox" checked={mapShowOutlierLinks} onChange={(event) => setMapShowOutlierLinks(event.target.checked)} />
                     </label>
                     <label className="settings-row">
+                      <span>Show centroids</span>
+                      <input type="checkbox" checked={mapShowCentroids} onChange={(event) => setMapShowCentroids(event.target.checked)} />
+                    </label>
+                    <label className="settings-row">
                       <span>Legend</span>
                       <input type="checkbox" checked={mapShowLegend} onChange={(event) => setMapShowLegend(event.target.checked)} />
                     </label>
@@ -1365,6 +1373,7 @@ export function Explorer() {
                   combineNearbyGroups={false}
                   showGroupCounts={mapShowGroupCounts}
                   showOutlierLinks={mapShowOutlierLinks}
+                  showCentroids={mapShowCentroids}
                   showLegend={mapShowLegend}
                   projectionMode={mapProjectionMode}
                   onProjectionModeChange={setMapProjectionMode}

@@ -46,12 +46,13 @@ const requestSchema = z.object({
       z.literal("single"),
       z.literal("sex"),
       z.literal("data_type"),
+      z.literal("group_cluster"),
       z.literal("y_haplogroup_initial"),
       z.literal("mtdna_initial"),
       z.literal("period")
     ])
     .default("sex"),
-  gradientBy: z.union([z.literal("snp_1240k"), z.literal("snp_2m"), z.literal("coverage_1150k"), z.literal("date_mean_bp")]).default("snp_1240k"),
+  gradientBy: z.union([z.literal("snp_1240k"), z.literal("snp_2m"), z.literal("coverage_1150k"), z.literal("date_mean_bp"), z.literal("smart_date_mean_bp")]).default("snp_1240k"),
   colorTheme: z.union([z.literal("light"), z.literal("dark")]).default("light"),
   showGroupCounts: z.boolean().optional()
 });

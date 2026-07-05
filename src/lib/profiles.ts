@@ -17,6 +17,7 @@ export type ProfileMapSettings = {
   presentation?: string;
   showGroupCounts?: boolean;
   showOutlierLinks?: boolean;
+  showCentroids?: boolean;
   showLegend?: boolean;
   projectionMode?: string;
 };
@@ -280,6 +281,7 @@ export function normalizeProfileView(raw: unknown, schema: ProfileSchema, option
       presentation: asString(mapObject?.presentation, undefined as unknown as string),
       showGroupCounts: asBoolean(mapObject?.showGroupCounts),
       showOutlierLinks: asBoolean(mapObject?.showOutlierLinks),
+      showCentroids: asBoolean(mapObject?.showCentroids),
       showLegend: asBoolean(mapObject?.showLegend),
       projectionMode: asString(mapObject?.projectionMode, undefined as unknown as string)
     },

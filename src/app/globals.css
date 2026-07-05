@@ -2089,6 +2089,8 @@ button:disabled {
 .map-base-satellite .map-status,
 .map-base-dark .map-legend,
 .map-base-satellite .map-legend,
+.map-base-dark .map-legend-toggle,
+.map-base-satellite .map-legend-toggle,
 .map-base-dark .map-control-group,
 .map-base-satellite .map-control-group,
 .map-base-dark .map-refresh-button,
@@ -2106,8 +2108,16 @@ button:disabled {
 
 .map-base-dark .map-control-group button:hover,
 .map-base-dark .map-control-group button:focus-visible,
+.map-base-dark .map-legend-header button:hover,
+.map-base-dark .map-legend-header button:focus-visible,
+.map-base-dark .map-legend-toggle:hover,
+.map-base-dark .map-legend-toggle:focus-visible,
 .map-base-satellite .map-control-group button:hover,
-.map-base-satellite .map-control-group button:focus-visible {
+.map-base-satellite .map-control-group button:focus-visible,
+.map-base-satellite .map-legend-header button:hover,
+.map-base-satellite .map-legend-header button:focus-visible,
+.map-base-satellite .map-legend-toggle:hover,
+.map-base-satellite .map-legend-toggle:focus-visible {
   background: rgba(255, 255, 255, 0.11);
 }
 
@@ -2143,7 +2153,7 @@ button:disabled {
   backdrop-filter: blur(10px);
   color: var(--text);
   font-size: 12px;
-  opacity: 0.56;
+  opacity: 0.46;
   transition: opacity 140ms ease;
 }
 
@@ -2155,6 +2165,65 @@ button:disabled {
 .map-legend strong {
   font-size: 12px;
   font-weight: 650;
+}
+
+.map-legend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.map-legend-header button,
+.map-legend-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.map-legend-header button {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+}
+
+.map-legend-header button:hover,
+.map-legend-header button:focus-visible,
+.map-legend-toggle:hover,
+.map-legend-toggle:focus-visible {
+  background: rgba(15, 15, 15, 0.08);
+  opacity: 1;
+}
+
+.map-legend-toggle {
+  position: absolute;
+  z-index: 2;
+  gap: 5px;
+  padding: 6px 9px;
+  border: 1px solid rgba(216, 213, 206, 0.9);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 8px 22px rgba(15, 15, 15, 0.08);
+  backdrop-filter: blur(10px);
+  color: var(--text);
+  font-size: 12px;
+  opacity: 0.42;
+}
+
+.map-legend-toggle-categorical {
+  left: 14px;
+  top: 88px;
+}
+
+.map-legend-toggle-gradient {
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
 }
 
 .map-legend span {
@@ -2170,12 +2239,45 @@ button:disabled {
   font-weight: 520;
 }
 
-.map-legend i {
+.map-legend-categorical span > i {
   width: 12px;
   height: 12px;
   border: 1px solid rgba(255, 255, 255, 0.82);
   border-radius: 999px;
   box-shadow: 0 0 0 1px rgba(15, 15, 15, 0.08);
+}
+
+.map-legend-categorical {
+  left: 14px;
+  top: 88px;
+  right: auto;
+  bottom: auto;
+  display: grid;
+  width: min(230px, calc(100% - 86px));
+  max-height: min(430px, calc(100% - 142px));
+  transform: none;
+  justify-content: stretch;
+  overflow-y: auto;
+  overflow-x: hidden;
+  gap: 6px;
+  opacity: 0.32;
+}
+
+.map-legend-categorical span {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+}
+
+.map-legend-categorical span b {
+  text-align: right;
+}
+
+.map-legend-categorical span > i {
+  width: 11px;
+  height: 11px;
 }
 
 .map-legend-scroll {
@@ -2210,6 +2312,7 @@ button:disabled {
   max-width: min(390px, calc(100% - 28px));
   gap: 6px;
   justify-content: stretch;
+  opacity: 0.52;
 }
 
 .map-gradient-bar {
@@ -2218,6 +2321,101 @@ button:disabled {
   border: 1px solid rgba(255, 255, 255, 0.8);
   border-radius: 999px;
   box-shadow: 0 0 0 1px rgba(15, 15, 15, 0.08);
+}
+
+.map-legend-segmented {
+  width: min(1120px, calc(100% - 28px));
+  min-width: min(780px, calc(100% - 28px));
+  max-width: min(1120px, calc(100% - 28px));
+}
+
+.map-gradient-segments {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(15, 15, 15, 0.08);
+}
+
+.map-gradient-segment {
+  position: relative;
+  display: block;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.map-gradient-segment:not(:last-child) {
+  border-right: 1px solid rgba(255, 255, 255, 0.48);
+}
+
+.map-gradient-segment-ticks {
+  position: absolute;
+  inset: -2px 0;
+  pointer-events: none;
+}
+
+.map-gradient-segment-ticks i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.74);
+  box-shadow: 0 0 0 1px rgba(15, 15, 15, 0.18);
+}
+
+.map-gradient-segment-labels {
+  display: flex;
+  gap: 0;
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.2;
+}
+
+.map-gradient-segment-labels > div {
+  display: grid;
+  flex: 1 1 0;
+  min-width: 0;
+  gap: 2px;
+  padding-right: 12px;
+}
+
+.map-gradient-segment-labels b,
+.map-gradient-segment-labels em,
+.map-gradient-segment-labels small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-gradient-segment-labels b {
+  color: var(--text);
+  font-size: 9.5px;
+  font-style: normal;
+  font-weight: 650;
+}
+
+.map-gradient-segment-labels em,
+.map-gradient-segment-labels small {
+  font-size: 8.5px;
+  font-style: normal;
+  opacity: 0.82;
+}
+
+.map-gradient-period-labels {
+  display: grid;
+  gap: 4px;
+}
+
+.map-gradient-period-labels i {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: normal;
+  white-space: nowrap;
 }
 
 .map-gradient-ticks {
@@ -2237,9 +2435,16 @@ button:disabled {
 .map-base-satellite .map-legend span b,
 .map-base-dark .map-gradient-ticks,
 .map-base-satellite .map-gradient-ticks,
+.map-base-dark .map-gradient-segment-labels,
+.map-base-satellite .map-gradient-segment-labels,
 .map-base-dark .map-legend-gradient small,
 .map-base-satellite .map-legend-gradient small {
   color: #c8c7c1;
+}
+
+.map-base-dark .map-gradient-segment-labels b,
+.map-base-satellite .map-gradient-segment-labels b {
+  color: #f4f4f2;
 }
 
 .map-base-dark .map-legend-scroll span:not(:last-child),

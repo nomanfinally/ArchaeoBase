@@ -28,6 +28,7 @@ function row(overrides: Partial<MapCacheSourceRow>): MapCacheSourceRow {
     y_hap_terminal: null,
     mtdna_haplogroup: null,
     data_type: "1240k",
+    suffixes: null,
     assessment: null,
     has_coordinates: true,
     latitude: 21.5,
@@ -131,31 +132,82 @@ describe("map cache helpers", () => {
     expect(gradientLegend?.stops).toContain("color");
   });
 
-  it("does not treat non-informative haplogroup notes as haplogroup initials", () => {
+  it("keeps haplogroup non-data reasons separate from real initials", () => {
     const prepared = prepareMapCache([
       row({ id: "1", genetic_id: "S1", y_hap_isogg: "n/a (female)", y_hap_terminal: "R1b", mtdna_haplogroup: "n/a (<2x)" }),
       row({ id: "2", genetic_id: "S2", y_hap_isogg: "R1b1a1", mtdna_haplogroup: "H1" })
     ]);
 
-    expect(prepared.samples[0].y_haplogroup_initial_label).toBe("Unknown");
-    expect(prepared.samples[0].mtdna_initial_label).toBe("Unknown");
+    expect(prepared.samples[0].y_haplogroup_initial_label).toBe("No Y-DNA (female)");
+    expect(prepared.samples[0].y_haplogroup_initial_color_light).not.toBe(UNKNOWN_COLOR);
+    expect(prepared.samples[0].mtdna_initial_label).toBe("mtDNA n/a (<2x)");
+    expect(prepared.samples[0].mtdna_initial_color_light).not.toBe(UNKNOWN_COLOR);
     expect(prepared.samples[1].y_haplogroup_initial_label).toBe("R");
     expect(prepared.samples[1].mtdna_initial_label).toBe("H");
   });
 
   it("uses aDNA-focused period boundaries from numeric BP values", () => {
-    expect(periodInfo(11500).label).toBe("Early Mesolithic");
-    expect(periodInfo(9000).label).toBe("Late Mesolithic");
-    expect(periodInfo(7600).label).toBe("Early Neolithic");
-    expect(periodInfo(7000).label).toBe("Middle Neolithic");
-    expect(periodInfo(6500).label).toBe("Late Neolithic");
+    expect(periodInfo(11500).label).toBe("Mesolithic (Early)");
+    expect(periodInfo(9000).label).toBe("Mesolithic (Late)");
+    expect(periodInfo(7600).label).toBe("Neolithic (EN)");
+    expect(periodInfo(7000).label).toBe("Neolithic (MN)");
+    expect(periodInfo(6500).label).toBe("Neolithic (LN)");
     expect(periodInfo(5800).label).toBe("Chalcolithic");
-    expect(periodInfo(5000).label).toBe("Early Bronze Age");
-    expect(periodInfo(4000).label).toBe("Middle Bronze Age");
-    expect(periodInfo(3300).label).toBe("Late Bronze Age");
+    expect(periodInfo(5000).label).toBe("Bronze Age (EBA)");
+    expect(periodInfo(4000).label).toBe("Bronze Age (MBA)");
+    expect(periodInfo(3700).label).toBe("Bronze Age (MLBA)");
+    expect(periodInfo(3300).label).toBe("Bronze Age (LBA)");
     expect(periodInfo(2800).label).toBe("Iron Age");
     expect(periodInfo(53950).label).toBe("Paleolithic");
     expect(periodInfo(65000).label).toBe("Unknown");
+  });
+
+  it("builds the split Age BP legend with broad period segments", () => {
+    const prepared = prepareMapCache([
+      row({ id: "1", genetic_id: "P1", date_mean_bp: 30000 }),
+      row({ id: "2", genetic_id: "M1", date_mean_bp: 9000 }),
+      row({ id: "3", genetic_id: "N1", date_mean_bp: 6500 }),
+      row({ id: "4", genetic_id: "B1", date_mean_bp: 3700 }),
+      row({ id: "5", genetic_id: "I1", date_mean_bp: 2500 })
+    ]);
+
+    const splitLegend = prepared.legends.find((legend) => legend.color_mode === "gradient" && legend.color_field === "smart_date_mean_bp" && legend.theme === "light");
+    const segments = JSON.parse(splitLegend?.segments ?? "[]") as Array<{ label: string; subLabel?: string; marks?: string[] }>;
+    expect(splitLegend?.label).toBe("Age BP (split)");
+    expect(segments.map((segment) => segment.label)).toEqual([
+      "Paleolithic-Mesolithic",
+      "Neolithic-Chalcolithic",
+      "Bronze Age",
+      "Iron Age-Modern"
+    ]);
+    expect(segments.find((segment) => segment.label === "Bronze Age")?.subLabel).toContain("MLBA");
+    expect(segments.find((segment) => segment.label === "Bronze Age")?.marks).toEqual(["EBA", "MBA", "MLBA", "LBA"]);
+  });
+
+  it("assigns stable population-cluster colors and allows distant color reuse", () => {
+    const prepared = prepareMapCache([
+      row({ id: "1", genetic_id: "A1", group_id: "Near_A", latitude: 45, longitude: 10 }),
+      row({ id: "2", genetic_id: "B1", group_id: "Near_B", latitude: 45.1, longitude: 10.1 }),
+      row({ id: "3", genetic_id: "C1", group_id: "Far_C", latitude: -35, longitude: -65 }),
+      row({ id: "4", genetic_id: "P1", group_id: "Turkmenistan_C_Parkhai.AG", suffixes: "AG", latitude: 38, longitude: 58 }),
+      row({ id: "5", genetic_id: "P2", group_id: "Turkmenistan_C_Parkhai.TW", suffixes: "TW", latitude: 38.1, longitude: 58.1 }),
+      row({ id: "6", genetic_id: "P3", group_id: "Turkmenistan_C_Parkhai.AG.TW", suffixes: "AG.TW", latitude: 38.2, longitude: 58.2 })
+    ]);
+
+    const nearA = prepared.samples.find((sample) => sample.group_id === "Near_A");
+    const nearB = prepared.samples.find((sample) => sample.group_id === "Near_B");
+    const farC = prepared.samples.find((sample) => sample.group_id === "Far_C");
+    const parkhai = prepared.samples.filter((sample) => sample.group_cluster_label === "Turkmenistan_C_Parkhai");
+    expect(nearA?.group_cluster_label).toBe("Near_A");
+    expect(nearB?.group_cluster_label).toBe("Near_B");
+    expect(nearA?.group_cluster_color_dark).not.toBe(nearB?.group_cluster_color_dark);
+    expect(farC?.group_cluster_color_dark).toMatch(/^#/);
+    expect(parkhai).toHaveLength(3);
+    expect(new Set(parkhai.map((sample) => sample.group_cluster_color_dark)).size).toBe(1);
+
+    const clusterLegend = prepared.legends.filter((legend) => legend.color_mode === "fixed" && legend.color_field === "group_cluster" && legend.theme === "dark");
+    expect(clusterLegend.length).toBeLessThanOrEqual(12);
+    expect(clusterLegend.every((legend) => /^Color \d+$/.test(legend.label))).toBe(true);
   });
 
   it("excludes suspicious coordinates from normal cached display positions", () => {

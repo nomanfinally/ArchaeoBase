@@ -198,6 +198,9 @@ CREATE TABLE IF NOT EXISTS sample_map_cache (
   data_type_label TEXT NOT NULL,
   data_type_color_light TEXT NOT NULL,
   data_type_color_dark TEXT NOT NULL,
+  group_cluster_label TEXT NOT NULL,
+  group_cluster_color_light TEXT NOT NULL,
+  group_cluster_color_dark TEXT NOT NULL,
   y_haplogroup_initial_label TEXT NOT NULL,
   y_haplogroup_initial_color_light TEXT NOT NULL,
   y_haplogroup_initial_color_dark TEXT NOT NULL,
@@ -219,7 +222,10 @@ CREATE TABLE IF NOT EXISTS sample_map_cache (
   gradient_coverage_1150k_color_dark TEXT NOT NULL,
   gradient_date_mean_bp_value DOUBLE PRECISION,
   gradient_date_mean_bp_color_light TEXT NOT NULL,
-  gradient_date_mean_bp_color_dark TEXT NOT NULL
+  gradient_date_mean_bp_color_dark TEXT NOT NULL,
+  gradient_smart_date_mean_bp_value DOUBLE PRECISION,
+  gradient_smart_date_mean_bp_color_light TEXT NOT NULL,
+  gradient_smart_date_mean_bp_color_dark TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS sample_map_cache_release_idx ON sample_map_cache (release_id);
@@ -252,6 +258,9 @@ CREATE TABLE IF NOT EXISTS group_map_cache (
   data_type_label TEXT NOT NULL,
   data_type_color_light TEXT NOT NULL,
   data_type_color_dark TEXT NOT NULL,
+  group_cluster_label TEXT NOT NULL,
+  group_cluster_color_light TEXT NOT NULL,
+  group_cluster_color_dark TEXT NOT NULL,
   y_haplogroup_initial_label TEXT NOT NULL,
   y_haplogroup_initial_color_light TEXT NOT NULL,
   y_haplogroup_initial_color_dark TEXT NOT NULL,
@@ -274,6 +283,9 @@ CREATE TABLE IF NOT EXISTS group_map_cache (
   gradient_date_mean_bp_value DOUBLE PRECISION,
   gradient_date_mean_bp_color_light TEXT NOT NULL,
   gradient_date_mean_bp_color_dark TEXT NOT NULL,
+  gradient_smart_date_mean_bp_value DOUBLE PRECISION,
+  gradient_smart_date_mean_bp_color_light TEXT NOT NULL,
+  gradient_smart_date_mean_bp_color_dark TEXT NOT NULL,
   PRIMARY KEY (release_id, group_site_key)
 );
 
@@ -281,6 +293,19 @@ CREATE INDEX IF NOT EXISTS group_map_cache_release_idx ON group_map_cache (relea
 CREATE INDEX IF NOT EXISTS group_map_cache_group_idx ON group_map_cache (release_id, group_id);
 CREATE INDEX IF NOT EXISTS group_map_cache_display_geom_gist_idx ON group_map_cache USING GIST (display_geom);
 CREATE INDEX IF NOT EXISTS group_map_cache_display_webmercator_gist_idx ON group_map_cache USING GIST (display_geom_webmercator);
+
+ALTER TABLE sample_map_cache ADD COLUMN IF NOT EXISTS group_cluster_label TEXT NOT NULL DEFAULT 'No group ID';
+ALTER TABLE sample_map_cache ADD COLUMN IF NOT EXISTS group_cluster_color_light TEXT NOT NULL DEFAULT '#000000';
+ALTER TABLE sample_map_cache ADD COLUMN IF NOT EXISTS group_cluster_color_dark TEXT NOT NULL DEFAULT '#000000';
+ALTER TABLE sample_map_cache ADD COLUMN IF NOT EXISTS gradient_smart_date_mean_bp_value DOUBLE PRECISION;
+ALTER TABLE sample_map_cache ADD COLUMN IF NOT EXISTS gradient_smart_date_mean_bp_color_light TEXT NOT NULL DEFAULT '#000000';
+ALTER TABLE sample_map_cache ADD COLUMN IF NOT EXISTS gradient_smart_date_mean_bp_color_dark TEXT NOT NULL DEFAULT '#000000';
+ALTER TABLE group_map_cache ADD COLUMN IF NOT EXISTS group_cluster_label TEXT NOT NULL DEFAULT 'No group ID';
+ALTER TABLE group_map_cache ADD COLUMN IF NOT EXISTS group_cluster_color_light TEXT NOT NULL DEFAULT '#000000';
+ALTER TABLE group_map_cache ADD COLUMN IF NOT EXISTS group_cluster_color_dark TEXT NOT NULL DEFAULT '#000000';
+ALTER TABLE group_map_cache ADD COLUMN IF NOT EXISTS gradient_smart_date_mean_bp_value DOUBLE PRECISION;
+ALTER TABLE group_map_cache ADD COLUMN IF NOT EXISTS gradient_smart_date_mean_bp_color_light TEXT NOT NULL DEFAULT '#000000';
+ALTER TABLE group_map_cache ADD COLUMN IF NOT EXISTS gradient_smart_date_mean_bp_color_dark TEXT NOT NULL DEFAULT '#000000';
 
 CREATE TABLE IF NOT EXISTS map_legend_cache (
   id BIGSERIAL PRIMARY KEY,
@@ -297,7 +322,10 @@ CREATE TABLE IF NOT EXISTS map_legend_cache (
   max_value DOUBLE PRECISION,
   stops JSONB,
   ticks JSONB,
+  segments JSONB,
   unknown_count INTEGER NOT NULL DEFAULT 0
 );
+
+ALTER TABLE map_legend_cache ADD COLUMN IF NOT EXISTS segments JSONB;
 
 CREATE INDEX IF NOT EXISTS map_legend_cache_lookup_idx ON map_legend_cache (release_id, color_mode, color_field, theme, sort_order);

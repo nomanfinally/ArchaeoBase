@@ -2,7 +2,7 @@ import type { Feature, FeatureCollection, LineString, Point } from "geojson";
 import { getLatestReleaseId, getPool } from "@/lib/db";
 import { compileGlobalSearch, compileSampleFilter, mergeWhere } from "@/lib/filters/compile";
 import type { MapBounds, SqlFragment } from "@/lib/filters/types";
-import { informativeHaplogroup, UNKNOWN_COLOR } from "./cache";
+import { haplogroupDisplayValue, UNKNOWN_COLOR } from "./cache";
 import type {
   MapColorBy,
   MapColorMode,
@@ -71,6 +71,9 @@ type CacheRow = {
   data_type_label: string;
   data_type_color_light: string;
   data_type_color_dark: string;
+  group_cluster_label: string;
+  group_cluster_color_light: string;
+  group_cluster_color_dark: string;
   y_haplogroup_initial_label: string;
   y_haplogroup_initial_color_light: string;
   y_haplogroup_initial_color_dark: string;
@@ -93,6 +96,9 @@ type CacheRow = {
   gradient_date_mean_bp_value: number | null;
   gradient_date_mean_bp_color_light: string;
   gradient_date_mean_bp_color_dark: string;
+  gradient_smart_date_mean_bp_value: number | null;
+  gradient_smart_date_mean_bp_color_light: string;
+  gradient_smart_date_mean_bp_color_dark: string;
   group_display_latitude: number | null;
   group_display_longitude: number | null;
   group_centroid_latitude: number | null;
@@ -123,6 +129,7 @@ type LegendCacheRow = {
   max_value: number | null;
   stops: unknown;
   ticks: unknown;
+  segments: unknown;
   unknown_count: number;
 };
 
@@ -132,6 +139,7 @@ const fixedColumnMap: Record<MapColorBy, { label: keyof CacheRow; light: keyof C
   single: { label: "single_label", light: "single_color_light", dark: "single_color_dark", title: "Single color" },
   sex: { label: "sex_label", light: "sex_color_light", dark: "sex_color_dark", title: "Molecular sex" },
   data_type: { label: "data_type_label", light: "data_type_color_light", dark: "data_type_color_dark", title: "Data type" },
+  group_cluster: { label: "group_cluster_label", light: "group_cluster_color_light", dark: "group_cluster_color_dark", title: "Population cluster" },
   y_haplogroup_initial: {
     label: "y_haplogroup_initial_label",
     light: "y_haplogroup_initial_color_light",
@@ -151,7 +159,13 @@ const gradientColumnMap: Record<MapGradientBy, { value: keyof CacheRow; light: k
     dark: "gradient_coverage_1150k_color_dark",
     title: "Coverage 1.15M"
   },
-  date_mean_bp: { value: "gradient_date_mean_bp_value", light: "gradient_date_mean_bp_color_light", dark: "gradient_date_mean_bp_color_dark", title: "Age BP" }
+  date_mean_bp: { value: "gradient_date_mean_bp_value", light: "gradient_date_mean_bp_color_light", dark: "gradient_date_mean_bp_color_dark", title: "Age BP" },
+  smart_date_mean_bp: {
+    value: "gradient_smart_date_mean_bp_value",
+    light: "gradient_smart_date_mean_bp_color_light",
+    dark: "gradient_smart_date_mean_bp_color_dark",
+    title: "Age BP (split)"
+  }
 };
 
 function asNumber(value: unknown) {
@@ -215,7 +229,7 @@ function aggregateNumeric(rows: CacheRow[], field: MapGradientBy) {
 function formatGradientValue(value: number | null, field: MapGradientBy) {
   if (value === null) return "Unknown";
   if (field === "coverage_1150k") return value.toFixed(value >= 1 ? 1 : 2);
-  if (field === "date_mean_bp") return `${formatInteger(value)} BP`;
+  if (field === "date_mean_bp" || field === "smart_date_mean_bp") return `${formatInteger(value)} BP`;
   return formatInteger(value);
 }
 
@@ -298,8 +312,8 @@ function sampleDetail(row: CacheRow) {
   const group = asText(row.group_id);
   const title = geneticId || group || "Sample";
   const place = [asText(row.locality), asText(row.political_entity)].filter(Boolean).join(", ");
-  const yDna = informativeHaplogroup(row.y_hap_isogg);
-  const mtDna = informativeHaplogroup(row.mtdna_haplogroup);
+  const yDna = haplogroupDisplayValue(row.y_hap_isogg, "y", row.molecular_sex);
+  const mtDna = haplogroupDisplayValue(row.mtdna_haplogroup, "mtdna", row.molecular_sex);
   return {
     title,
     subtitle: place,
@@ -307,6 +321,7 @@ function sampleDetail(row: CacheRow) {
       ["Group", group],
       ["Sample", geneticId],
       ["Date", formatYear(asNumber(row.date_mean_year_ce))],
+      ["Period", row.period_label],
       ["Sex", normalizeSex(row.molecular_sex)],
       ["Y-DNA", yDna],
       ["mtDNA", mtDna],
@@ -319,8 +334,9 @@ function sampleDetail(row: CacheRow) {
 function groupDetail(groupId: string, rows: CacheRow[]) {
   const localities = Array.from(new Set(rows.map((row) => asText(row.locality)).filter(Boolean))).sort();
   const countries = Array.from(new Set(rows.map((row) => asText(row.political_entity)).filter(Boolean))).sort();
-  const yDna = Array.from(new Set(rows.map((row) => informativeHaplogroup(row.y_hap_isogg)).filter(Boolean))).sort();
-  const mtDna = Array.from(new Set(rows.map((row) => informativeHaplogroup(row.mtdna_haplogroup)).filter(Boolean))).sort();
+  const periods = Array.from(new Set(rows.map((row) => asText(row.period_label)).filter(Boolean))).sort();
+  const yDna = Array.from(new Set(rows.map((row) => haplogroupDisplayValue(row.y_hap_isogg, "y", row.molecular_sex)))).sort();
+  const mtDna = Array.from(new Set(rows.map((row) => haplogroupDisplayValue(row.mtdna_haplogroup, "mtdna", row.molecular_sex)))).sort();
   const years = rows.map((row) => asNumber(row.date_mean_year_ce)).filter((value): value is number => value !== null);
   const snps = rows.map((row) => asNumber(row.snp_1240k)).filter((value): value is number => value !== null);
   const avgSnps = snps.length ? Math.round(snps.reduce((total, value) => total + value, 0) / snps.length) : null;
@@ -331,6 +347,7 @@ function groupDetail(groupId: string, rows: CacheRow[]) {
     popupRows: rowsJson([
       ["Samples", rows.length],
       ["Date span", dateText],
+      ["Periods", truncateText(periods.join(", "))],
       ["Countries", truncateText(countries.join(", "))],
       ["Localities", truncateText(localities.join("; "))],
       ["Y-DNA", truncateText(yDna.join(", "))],
@@ -364,6 +381,38 @@ function pointFeature(
   };
 }
 
+function centroidColorForGroup(rows: CacheRow[], theme: MapColorTheme) {
+  const color = String(rows[0]?.[theme === "dark" ? "group_cluster_color_dark" : "group_cluster_color_light"] ?? UNKNOWN_COLOR);
+  return /^#[0-9a-f]{6}$/i.test(color) ? color : UNKNOWN_COLOR;
+}
+
+function centroidFeature(group: GroupedRows, color: string): Feature<Point, MapPointProperties> {
+  const groupId = group.rows[0]?.group_id || `No group ID:${group.rows[0]?.genetic_id ?? group.key}`;
+  return pointFeature(
+    `centroid:${group.key}`,
+    "centroid",
+    group.centroidLatitude,
+    group.centroidLongitude,
+    group.centroidLatitude,
+    group.centroidLongitude,
+    {
+      label: "",
+      sampleCount: group.rows.length,
+      groupCount: 1,
+      groupId,
+      markerColor: color,
+      colorLabel: "Group centroid",
+      isUnknownColor: color === UNKNOWN_COLOR,
+      title: "Group centroid",
+      subtitle: groupId,
+      popupRows: rowsJson([
+        ["Group", groupId],
+        ["Samples", group.rows.length]
+      ])
+    }
+  );
+}
+
 export function buildSampleFeatures(rows: CacheRow[], colorConfig: MapColorConfig) {
   const features: Array<Feature<Point, MapPointProperties>> = [];
   for (const row of rows) {
@@ -382,6 +431,10 @@ export function buildSampleFeatures(rows: CacheRow[], colorConfig: MapColorConfi
         ...detail
       })
     );
+  }
+  for (const group of groupRows(rows)) {
+    if (group.rows.length <= 1) continue;
+    features.push(centroidFeature(group, centroidColorForGroup(group.rows, colorConfig.theme)));
   }
   return { features, leaderLines: [] as Array<Feature<LineString, MapLineProperties>> };
 }
@@ -457,6 +510,10 @@ export function buildGroupFeatures(rows: CacheRow[], colorConfig: MapColorConfig
           strokeColor: colorInfo.color
         }
       });
+    }
+
+    if (group.rows.length > 1) {
+      features.push(centroidFeature(group, centroidColorForGroup(group.rows, colorConfig.theme)));
     }
   }
 
@@ -550,7 +607,7 @@ async function loadLegend(releaseId: string, config: MapColorConfig): Promise<Ma
   const field = config.mode === "fixed" ? config.fixedBy : config.gradientBy;
   const result = await pool.query<LegendCacheRow>(
     `
-      SELECT legend_kind, label, color, count, min_value, max_value, stops, ticks, unknown_count
+      SELECT legend_kind, label, color, count, min_value, max_value, stops, ticks, segments, unknown_count
       FROM map_legend_cache
       WHERE release_id = $1 AND color_mode = $2 AND color_field = $3 AND theme = $4
       ORDER BY sort_order ASC, label ASC
@@ -568,6 +625,7 @@ async function loadLegend(releaseId: string, config: MapColorConfig): Promise<Ma
       max: first.max_value,
       stops: parseJsonArray(first.stops),
       ticks: parseJsonArray(first.ticks),
+      segments: parseJsonArray(first.segments),
       unknownCount: first.unknown_count ?? 0
     };
   }
@@ -588,32 +646,60 @@ function filteredLegend(cachedLegend: MapLegend, rows: CacheRow[], config: MapCo
   if (config.mode === "gradient") {
     if (cachedLegend.kind !== "gradient") return emptyLegend(config);
     const valueColumn = gradientColumnMap[config.gradientBy].value;
+    const segments = cachedLegend.segments?.map((segment) => ({
+      ...segment,
+      count: rows.filter((row) => {
+        const value = asNumber(row[valueColumn]);
+        if (value === null) return false;
+        const lowerOk = segment.min === 0 ? value >= segment.min : value > segment.min;
+        return lowerOk && value <= segment.max;
+      }).length
+    }));
     return {
       ...cachedLegend,
+      segments,
       unknownCount: rows.filter((row) => asNumber(row[valueColumn]) === null).length
     };
   }
 
   const columns = fixedColumnMap[config.fixedBy];
+  const colorLegend = new Map<string, { label: string; sort: number }>();
+  if (config.fixedBy === "group_cluster" && cachedLegend.kind === "categorical") {
+    cachedLegend.items.forEach((item, index) => {
+      colorLegend.set(item.color, { label: item.label, sort: index });
+    });
+  }
   const counts = new Map<string, { color: string; count: number; sort: number }>();
   for (const row of rows) {
-    const label = String(row[columns.label] ?? "Unknown");
     const color = String(row[config.theme === "dark" ? columns.dark : columns.light] ?? UNKNOWN_COLOR);
-    const current = counts.get(label);
+    const colorEntry = config.fixedBy === "group_cluster" ? colorLegend.get(color) : null;
+    const label = colorEntry?.label ?? String(row[columns.label] ?? "Unknown");
+    const key = config.fixedBy === "group_cluster" ? color : label;
+    const current = counts.get(key);
     if (current) {
       current.count += 1;
       continue;
     }
-    counts.set(label, {
+    counts.set(key, {
       color,
       count: 1,
-      sort: config.fixedBy === "period" ? asNumber(row.period_sort) ?? 999999 : label === "Unknown" ? 999999 : label.charCodeAt(0)
+      sort: config.fixedBy === "period"
+        ? asNumber(row.period_sort) ?? 999999
+        : colorEntry
+          ? colorEntry.sort
+          : label === "Unknown"
+            ? 999999
+            : label.charCodeAt(0)
     });
   }
 
   const items = Array.from(counts.entries())
-    .sort(([labelA, itemA], [labelB, itemB]) => itemA.sort - itemB.sort || labelA.localeCompare(labelB))
-    .map(([label, item]) => ({ label, color: item.color, count: item.count }));
+    .map(([labelOrColor, item]) => ({
+      label: config.fixedBy === "group_cluster" ? colorLegend.get(item.color)?.label ?? labelOrColor : labelOrColor,
+      item
+    }))
+    .sort((a, b) => a.item.sort - b.item.sort || a.label.localeCompare(b.label))
+    .map(({ label, item }) => ({ label, color: item.color, count: item.count }));
 
   return {
     kind: "categorical",
@@ -664,6 +750,9 @@ const cacheSelect = `
   sc.data_type_label,
   sc.data_type_color_light,
   sc.data_type_color_dark,
+  sc.group_cluster_label,
+  sc.group_cluster_color_light,
+  sc.group_cluster_color_dark,
   sc.y_haplogroup_initial_label,
   sc.y_haplogroup_initial_color_light,
   sc.y_haplogroup_initial_color_dark,
@@ -686,6 +775,9 @@ const cacheSelect = `
   sc.gradient_date_mean_bp_value,
   sc.gradient_date_mean_bp_color_light,
   sc.gradient_date_mean_bp_color_dark,
+  sc.gradient_smart_date_mean_bp_value,
+  sc.gradient_smart_date_mean_bp_color_light,
+  sc.gradient_smart_date_mean_bp_color_dark,
   gc.display_latitude AS group_display_latitude,
   gc.display_longitude AS group_display_longitude,
   gc.centroid_latitude AS group_centroid_latitude,
@@ -783,11 +875,12 @@ export async function runMapQuery(request: MapQueryRequest): Promise<MapQueryRes
     ? buildGroupFeatures(mappedRows.rows, colorConfig, legend, showGroupCounts)
     : buildSampleFeatures(mappedRows.rows, colorConfig);
 
+  const primaryFeatures = renderData.features.filter((feature) => feature.properties.kind !== "centroid");
   const renderedSamples = presentation === "group_locations"
-    ? renderData.features.reduce((total, feature) => total + feature.properties.sampleCount, 0)
-    : renderData.features.length;
+    ? primaryFeatures.reduce((total, feature) => total + feature.properties.sampleCount, 0)
+    : primaryFeatures.filter((feature) => feature.properties.kind === "sample").length;
   const renderedGroups = presentation === "group_locations"
-    ? renderData.features.length
+    ? primaryFeatures.filter((feature) => feature.properties.kind === "group").length
     : new Set(mappedRows.rows.map((row) => row.group_site_key || row.group_id || row.sample_id)).size;
   const countRow = counts.rows[0] ?? { total_matched: 0, mapped_samples: 0, unmapped_samples: 0, coordinate_issues: 0 };
 
@@ -800,7 +893,7 @@ export async function runMapQuery(request: MapQueryRequest): Promise<MapQueryRes
       totalMatched: countRow.total_matched ?? 0,
       mappedSamples: countRow.mapped_samples ?? 0,
       visibleSamples: renderedSamples,
-      visibleFeatures: renderData.features.length,
+      visibleFeatures: primaryFeatures.length,
       renderedSamples,
       renderedGroups,
       unmappedSamples: countRow.unmapped_samples ?? 0,

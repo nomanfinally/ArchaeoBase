@@ -7,13 +7,14 @@ export type MapColorBy =
   | "single"
   | "sex"
   | "data_type"
+  | "group_cluster"
   | "y_haplogroup_initial"
   | "mtdna_initial"
   | "period";
 
 export type MapColorMode = "fixed" | "gradient";
 
-export type MapGradientBy = "snp_1240k" | "snp_2m" | "coverage_1150k" | "date_mean_bp";
+export type MapGradientBy = "snp_1240k" | "snp_2m" | "coverage_1150k" | "date_mean_bp" | "smart_date_mean_bp";
 
 export type MapColorTheme = "light" | "dark";
 
@@ -38,7 +39,7 @@ export type MapQueryRequest = {
   showGroupCounts?: boolean;
 };
 
-export type MapPointKind = "aggregate" | "group" | "sample";
+export type MapPointKind = "aggregate" | "group" | "sample" | "centroid";
 
 export type MapLegendItem = {
   label: string;
@@ -50,6 +51,17 @@ export type MapGradientStop = {
   value: number;
   label: string;
   color: string;
+};
+
+export type MapGradientSegment = {
+  label: string;
+  subLabel?: string;
+  marks?: string[];
+  min: number;
+  max: number;
+  startColor: string;
+  endColor: string;
+  count: number;
 };
 
 export type MapLegend =
@@ -66,6 +78,7 @@ export type MapLegend =
       max: number | null;
       stops: MapGradientStop[];
       ticks: Array<{ value: number; label: string }>;
+      segments?: MapGradientSegment[];
       unknownCount: number;
     };
 

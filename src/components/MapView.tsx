@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Feature, FeatureCollection, LineString, Point } from "geojson";
-import type { GeoJSONSource, Map as MapLibreMap, MapMouseEvent, Popup, StyleSpecification } from "maplibre-gl";
+import type { GeoJSONSource, IControl, Map as MapLibreMap, MapMouseEvent, Popup, StyleSpecification } from "maplibre-gl";
+import { Globe2, Map as MapIcon, Moon, Route, Satellite, Sun } from "lucide-react";
 import type { FilterNode } from "@/lib/filters/types";
 import type {
   MapColorBy,
@@ -35,6 +37,7 @@ type Props = {
   showOutlierLinks: boolean;
   showLegend: boolean;
   projectionMode: MapProjectionMode;
+  onProjectionModeChange: (mode: MapProjectionMode) => void;
   onSummaryChange: (summary: MapQuerySummary, release: MapQueryResponse["release"]) => void;
   onReviewChange?: (review: Pick<MapQueryResponse, "unmappedSamples" | "coordinateIssues">) => void;
 };
@@ -65,6 +68,13 @@ export const mapBaseStyles: { id: MapBaseStyle; label: string; swatch: string }[
   { id: "streets", label: "Streets", swatch: "#f8f3c7" },
   { id: "satellite", label: "Satellite", swatch: "#3e4a59" }
 ];
+
+const mapBaseStyleIcons: Record<MapBaseStyle, typeof Sun> = {
+  light: Sun,
+  dark: Moon,
+  streets: Route,
+  satellite: Satellite
+};
 
 export const mapFixedColorOptions: { id: MapColorBy; label: string }[] = [
   { id: "single", label: "Single color" },
@@ -431,6 +441,60 @@ function zoomPercent(map: MapLibreMap) {
   return Math.round(((map.getZoom() - MAP_MIN_ZOOM) / (MAP_MAX_ZOOM - MAP_MIN_ZOOM)) * 100);
 }
 
+function MapControlStack({
+  baseStyle,
+  projectionMode,
+  onBaseStyleChange,
+  onProjectionModeChange
+}: {
+  baseStyle: MapBaseStyle;
+  projectionMode: MapProjectionMode;
+  onBaseStyleChange: (style: MapBaseStyle) => void;
+  onProjectionModeChange: (mode: MapProjectionMode) => void;
+}) {
+  return (
+    <>
+      <div className="map-control-group" aria-label="Map style">
+        {mapBaseStyles.map((style) => {
+          const Icon = mapBaseStyleIcons[style.id];
+          return (
+            <button
+              key={style.id}
+              className={baseStyle === style.id ? "active" : ""}
+              type="button"
+              onClick={() => onBaseStyleChange(style.id)}
+              aria-label={`${style.label} map style`}
+              title={`${style.label} map style`}
+            >
+              <Icon size={15} strokeWidth={2.1} />
+            </button>
+          );
+        })}
+      </div>
+      <div className="map-control-group" aria-label="Projection">
+        <button
+          className={projectionMode === "flat" ? "active" : ""}
+          type="button"
+          onClick={() => onProjectionModeChange("flat")}
+          aria-label="Flat map"
+          title="Flat map"
+        >
+          <MapIcon size={15} strokeWidth={2.1} />
+        </button>
+        <button
+          className={projectionMode === "globe" ? "active" : ""}
+          type="button"
+          onClick={() => onProjectionModeChange("globe")}
+          aria-label="Globe map"
+          title="Globe map"
+        >
+          <Globe2 size={15} strokeWidth={2.1} />
+        </button>
+      </div>
+    </>
+  );
+}
+
 export function MapView({
   filter,
   globalSearch,
@@ -446,6 +510,7 @@ export function MapView({
   showOutlierLinks,
   showLegend,
   projectionMode,
+  onProjectionModeChange,
   onSummaryChange,
   onReviewChange = () => undefined
 }: Props) {
@@ -464,6 +529,7 @@ export function MapView({
   const [queryError, setQueryError] = useState<string | null>(null);
   const [mapData, setMapData] = useState<MapQueryResponse | null>(null);
   const [currentZoomPercent, setCurrentZoomPercent] = useState(0);
+  const [controlHost, setControlHost] = useState<HTMLElement | null>(null);
 
   function syncSources(map = mapRef.current) {
     if (!map || !map.isStyleLoaded()) return;
@@ -497,17 +563,16 @@ export function MapView({
     projectionModeRef.current = projectionMode;
     const map = mapRef.current;
     if (!map) return;
-    const updateProjection = () => {
+    const updateProjectionStyle = () => {
       if (!map.isStyleLoaded()) {
-        map.once("idle", updateProjection);
+        map.once("idle", updateProjectionStyle);
         return;
       }
-      applyProjection(map, projectionMode);
-      syncSources(map);
+      map.setStyle(mapStyleDefinition(baseStyleRef.current, projectionMode));
     };
-    updateProjection();
+    updateProjectionStyle();
     return () => {
-      map.off("idle", updateProjection);
+      map.off("idle", updateProjectionStyle);
     };
   }, [projectionMode]);
 
@@ -537,6 +602,14 @@ export function MapView({
       }
 
       map.addControl(new maplibre.NavigationControl({ visualizePitch: false }), "top-right");
+      const customControls = document.createElement("div");
+      customControls.className = "maplibregl-ctrl archaebase-map-view-controls";
+      const customControl: IControl = {
+        onAdd: () => customControls,
+        onRemove: () => customControls.remove()
+      };
+      map.addControl(customControl, "top-right");
+      setControlHost(customControls);
       map.addControl(new maplibre.AttributionControl({ compact: true }), "bottom-right");
       popupRef.current = new maplibre.Popup({ closeButton: false, closeOnClick: false, offset: 14, maxWidth: "320px" });
       mapRef.current = map;
@@ -635,6 +708,7 @@ export function MapView({
     return () => {
       disposed = true;
       resizeObserver?.disconnect();
+      setControlHost(null);
       popupRef.current?.remove();
       mapRef.current?.remove();
       popupRef.current = null;
@@ -719,20 +793,17 @@ export function MapView({
         </small>
         <small>Zoom {currentZoomPercent}%</small>
       </div>
-      <div className="map-basemap-control" aria-label="Base map">
-        {mapBaseStyles.map((style) => (
-          <button
-            key={style.id}
-            className={baseStyle === style.id ? "active" : ""}
-            type="button"
-            onClick={() => onBaseStyleChange(style.id)}
-            title={`${style.label} base map`}
-          >
-            <i style={{ background: style.swatch }} />
-            <span>{style.label}</span>
-          </button>
-        ))}
-      </div>
+      {controlHost
+        ? createPortal(
+            <MapControlStack
+              baseStyle={baseStyle}
+              projectionMode={projectionMode}
+              onBaseStyleChange={onBaseStyleChange}
+              onProjectionModeChange={onProjectionModeChange}
+            />,
+            controlHost
+          )
+        : null}
       {showLegend ? <MapLegendPanel legend={mapData?.legend ?? null} /> : null}
       {queryError ? (
         <div className="map-empty">

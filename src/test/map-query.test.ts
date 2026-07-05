@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assessCoordinate } from "@/lib/map/coordinate-sanity";
+import { periodInfo } from "@/lib/periods";
 import {
   buildAnchoredMapPositions,
   prepareMapCache,
@@ -128,6 +129,33 @@ describe("map cache helpers", () => {
     const gradientLegend = prepared.legends.find((legend) => legend.color_mode === "gradient" && legend.color_field === "date_mean_bp" && legend.theme === "light");
     expect(gradientLegend?.legend_kind).toBe("gradient");
     expect(gradientLegend?.stops).toContain("color");
+  });
+
+  it("does not treat non-informative haplogroup notes as haplogroup initials", () => {
+    const prepared = prepareMapCache([
+      row({ id: "1", genetic_id: "S1", y_hap_isogg: "n/a (female)", y_hap_terminal: "R1b", mtdna_haplogroup: "n/a (<2x)" }),
+      row({ id: "2", genetic_id: "S2", y_hap_isogg: "R1b1a1", mtdna_haplogroup: "H1" })
+    ]);
+
+    expect(prepared.samples[0].y_haplogroup_initial_label).toBe("Unknown");
+    expect(prepared.samples[0].mtdna_initial_label).toBe("Unknown");
+    expect(prepared.samples[1].y_haplogroup_initial_label).toBe("R");
+    expect(prepared.samples[1].mtdna_initial_label).toBe("H");
+  });
+
+  it("uses aDNA-focused period boundaries from numeric BP values", () => {
+    expect(periodInfo(11500).label).toBe("Early Mesolithic");
+    expect(periodInfo(9000).label).toBe("Late Mesolithic");
+    expect(periodInfo(7600).label).toBe("Early Neolithic");
+    expect(periodInfo(7000).label).toBe("Middle Neolithic");
+    expect(periodInfo(6500).label).toBe("Late Neolithic");
+    expect(periodInfo(5800).label).toBe("Chalcolithic");
+    expect(periodInfo(5000).label).toBe("Early Bronze Age");
+    expect(periodInfo(4000).label).toBe("Middle Bronze Age");
+    expect(periodInfo(3300).label).toBe("Late Bronze Age");
+    expect(periodInfo(2800).label).toBe("Iron Age");
+    expect(periodInfo(53950).label).toBe("Paleolithic");
+    expect(periodInfo(65000).label).toBe("Unknown");
   });
 
   it("excludes suspicious coordinates from normal cached display positions", () => {

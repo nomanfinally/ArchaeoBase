@@ -15,7 +15,14 @@ type Props = {
 const operatorLabels: Record<string, string> = {
   contains: "contains",
   not_contains: "does not contain",
+  contains_any: "contains any of",
+  contains_all: "contains all of",
+  not_contains_any: "does not contain any of",
+  not_contains_all: "does not contain all of",
   starts_with: "starts with",
+  not_starts_with: "does not start with",
+  ends_with: "ends with",
+  not_ends_with: "does not end with",
   equals: "is",
   not_equals: "is not",
   in: "is one of",
@@ -27,6 +34,12 @@ const operatorLabels: Record<string, string> = {
   between: "between",
   is_empty: "is empty",
   is_not_empty: "is not empty"
+};
+
+const groupLabels = {
+  and: "All of the following are true",
+  or: "Any of the following are true",
+  not: "None of the following are true"
 };
 
 function defaultCondition(fields: FieldDefinition[], operatorsByKind: Record<string, Operator[]>): FilterNode {
@@ -55,6 +68,10 @@ function removeChild(group: Extract<FilterNode, { type: "group" }>, index: numbe
 
 function uniqueValueOperators(operator: string) {
   return operator === "equals" || operator === "not_equals";
+}
+
+function listValueOperators(operator: string) {
+  return operator === "in" || operator === "not_in" || operator.endsWith("_any") || operator.endsWith("_all");
 }
 
 function UniqueValueInput({
@@ -173,10 +190,16 @@ function ValueControl({
     <input
       className="input value-input"
       value={String(node.value ?? "")}
-      placeholder={node.operator === "between" ? "min,max" : "value"}
+      placeholder={node.operator === "between" ? "min,max" : listValueOperators(node.operator) ? "value1, value2" : "value"}
       onChange={(event) => onChange({ ...node, value: event.target.value })}
     />
   );
+}
+
+function conjunctionLabel(parentOp: "and" | "or" | "not", index: number) {
+  if (index === 0) return "where";
+  if (parentOp === "or" || parentOp === "not") return "or";
+  return "and";
 }
 
 function FilterNodeEditor({
@@ -184,6 +207,7 @@ function FilterNodeEditor({
   fields,
   operatorsByKind,
   depth,
+  relationLabel,
   onChange,
   onRemove
 }: {
@@ -191,6 +215,7 @@ function FilterNodeEditor({
   fields: FieldDefinition[];
   operatorsByKind: Record<string, Operator[]>;
   depth: number;
+  relationLabel?: string;
   onChange: (value: FilterNode) => void;
   onRemove?: () => void;
 }) {
@@ -200,6 +225,7 @@ function FilterNodeEditor({
 
     return (
       <div className="filter-row">
+        <span className="filter-relation">{relationLabel ?? "where"}</span>
         <select
           className="select field-select"
           value={node.field}
@@ -242,14 +268,14 @@ function FilterNodeEditor({
 
   return (
     <div className="filter-group">
-      <div className="filter-actions">
+      <div className="filter-group-header">
         <select className="select" value={node.op} onChange={(event) => onChange({ ...node, op: event.target.value as "and" | "or" | "not" })}>
-          <option value="and">All</option>
-          <option value="or">Any</option>
-          <option value="not">None</option>
+          <option value="and">{groupLabels.and}</option>
+          <option value="or">{groupLabels.or}</option>
+          <option value="not">{groupLabels.not}</option>
         </select>
         {onRemove ? (
-          <button className="button danger" type="button" onClick={onRemove} title="Remove group">
+          <button className="icon-button danger" type="button" onClick={onRemove} title="Remove group" aria-label="Remove group">
             <Trash2 size={14} />
           </button>
         ) : null}
@@ -261,6 +287,7 @@ function FilterNodeEditor({
           fields={fields}
           operatorsByKind={operatorsByKind}
           depth={depth + 1}
+          relationLabel={conjunctionLabel(node.op, index)}
           onChange={(next) => onChange(updateChild(node, index, next))}
           onRemove={() => onChange(removeChild(node, index))}
         />
@@ -268,9 +295,9 @@ function FilterNodeEditor({
       <div className="filter-actions">
         <button className="button" type="button" onClick={() => onChange({ ...node, children: [...node.children, defaultCondition(fields, operatorsByKind)] })}>
           <Plus size={14} />
-          Condition
+          Add filter
         </button>
-        {depth < 3 ? (
+        {depth < 5 ? (
           <button
             className="button"
             type="button"
@@ -282,7 +309,7 @@ function FilterNodeEditor({
             }
           >
             <Plus size={14} />
-            Group
+            Add filter group
           </button>
         ) : null}
       </div>

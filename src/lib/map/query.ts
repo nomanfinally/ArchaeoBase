@@ -2,7 +2,7 @@ import type { Feature, FeatureCollection, LineString, Point } from "geojson";
 import { getLatestReleaseId, getPool } from "@/lib/db";
 import { compileGlobalSearch, compileSampleFilter, mergeWhere } from "@/lib/filters/compile";
 import type { MapBounds, SqlFragment } from "@/lib/filters/types";
-import { UNKNOWN_COLOR } from "./cache";
+import { informativeHaplogroup, UNKNOWN_COLOR } from "./cache";
 import type {
   MapColorBy,
   MapColorMode,
@@ -298,7 +298,8 @@ function sampleDetail(row: CacheRow) {
   const group = asText(row.group_id);
   const title = geneticId || group || "Sample";
   const place = [asText(row.locality), asText(row.political_entity)].filter(Boolean).join(", ");
-  const yDna = asText(row.y_hap_isogg);
+  const yDna = informativeHaplogroup(row.y_hap_isogg);
+  const mtDna = informativeHaplogroup(row.mtdna_haplogroup);
   return {
     title,
     subtitle: place,
@@ -308,7 +309,7 @@ function sampleDetail(row: CacheRow) {
       ["Date", formatYear(asNumber(row.date_mean_year_ce))],
       ["Sex", normalizeSex(row.molecular_sex)],
       ["Y-DNA", yDna],
-      ["mtDNA", asText(row.mtdna_haplogroup)],
+      ["mtDNA", mtDna],
       ["SNPs 1240k", row.snp_1240k],
       ["SNPs 2M", row.snp_2m]
     ])
@@ -318,8 +319,8 @@ function sampleDetail(row: CacheRow) {
 function groupDetail(groupId: string, rows: CacheRow[]) {
   const localities = Array.from(new Set(rows.map((row) => asText(row.locality)).filter(Boolean))).sort();
   const countries = Array.from(new Set(rows.map((row) => asText(row.political_entity)).filter(Boolean))).sort();
-  const yDna = Array.from(new Set(rows.map((row) => asText(row.y_hap_isogg)).filter(Boolean))).sort();
-  const mtDna = Array.from(new Set(rows.map((row) => asText(row.mtdna_haplogroup)).filter(Boolean))).sort();
+  const yDna = Array.from(new Set(rows.map((row) => informativeHaplogroup(row.y_hap_isogg)).filter(Boolean))).sort();
+  const mtDna = Array.from(new Set(rows.map((row) => informativeHaplogroup(row.mtdna_haplogroup)).filter(Boolean))).sort();
   const years = rows.map((row) => asNumber(row.date_mean_year_ce)).filter((value): value is number => value !== null);
   const snps = rows.map((row) => asNumber(row.snp_1240k)).filter((value): value is number => value !== null);
   const avgSnps = snps.length ? Math.round(snps.reduce((total, value) => total + value, 0) / snps.length) : null;

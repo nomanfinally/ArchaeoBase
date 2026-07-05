@@ -2,9 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SortingState } from "@tanstack/react-table";
-import { AlertCircle, ArrowUpDown, Columns3, Filter, GripVertical, Map as MapIcon, Plus, RefreshCw, Search, Settings2, Table2, Trash2, X } from "lucide-react";
-import type { FilterNode } from "@/lib/filters/types";
+import { AlertCircle, ArrowUpDown, Columns3, Copy, Download, Edit3, Filter, GripVertical, Map as MapIcon, Plus, RefreshCw, Search, Settings2, Table2, Trash2, Upload, X } from "lucide-react";
+import type { FilterNode, SortSpec } from "@/lib/filters/types";
 import type { MapQueryResponse } from "@/lib/map/types";
+import {
+  PROFILE_FILE_EXTENSION,
+  parseProfileText,
+  stringifyProfileFile,
+  type ProfileFile,
+  type ProfileView
+} from "@/lib/profiles";
 import type { FieldDefinition, Operator } from "@/lib/schema/fields";
 import { DataTable } from "./DataTable";
 import { FilterBuilder } from "./FilterBuilder";
@@ -26,6 +33,7 @@ import {
   periodStorageKey,
   TimePeriodSettings,
   TimeWindow,
+  TimeWindowPanel,
   validStoredPeriods,
   type PeriodOption,
   type TimeWindowValue
@@ -61,6 +69,12 @@ const emptyFilter: FilterNode = {
   children: []
 };
 
+const explorerStorageKey = "archaebase:explorer-state:v1";
+const MAX_SORT_RULES = 8;
+const DEFAULT_PANEL_WIDTH = 420;
+const MIN_PANEL_WIDTH = 320;
+const MAX_PANEL_WIDTH = 720;
+
 function formatCount(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
 }
@@ -79,6 +93,47 @@ function normalizeRows(rows: Record<string, unknown>[], entity: Entity) {
 function orderFieldsByColumnIds(fields: FieldDefinition[], columnIds: string[]) {
   const fieldById = new Map(fields.map((field) => [field.id, field]));
   return columnIds.map((fieldId) => fieldById.get(fieldId)).filter((field): field is FieldDefinition => Boolean(field));
+}
+
+function clampPanelWidth(width: number) {
+  return Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, Math.round(width)));
+}
+
+function sortingToSortSpecs(sorting: SortingState): SortSpec[] {
+  return sorting.slice(0, MAX_SORT_RULES).map((entry) => ({ field: entry.id, direction: entry.desc ? "desc" : "asc" }));
+}
+
+function sortSpecsToSorting(sort: SortSpec[] | undefined): SortingState {
+  return (sort ?? []).slice(0, MAX_SORT_RULES).map((entry) => ({ id: entry.field, desc: entry.direction === "desc" }));
+}
+
+function sanitizeColumnIds(ids: string[] | undefined, fields: FieldDefinition[], fallback: string[]) {
+  const known = new Set(fields.map((field) => field.id));
+  const next = (ids ?? []).filter((id, index, list) => known.has(id) && list.indexOf(id) === index);
+  return next.length ? next : fallback;
+}
+
+function sanitizeColumnWidths(widths: Record<string, number> | undefined, fields: FieldDefinition[]) {
+  const known = new Set(fields.map((field) => field.id).concat("admixture"));
+  return Object.fromEntries(
+    Object.entries(widths ?? {})
+      .filter(([fieldId, width]) => known.has(fieldId) && Number.isFinite(width))
+      .map(([fieldId, width]) => [fieldId, Math.min(520, Math.max(92, Math.round(width)))])
+  );
+}
+
+function sortDirectionLabels(field: FieldDefinition | undefined) {
+  if (field?.kind === "number") return { asc: "0 -> 9", desc: "9 -> 0" };
+  if (field?.kind === "year") return { asc: "Old -> New", desc: "New -> Old" };
+  return { asc: "A -> Z", desc: "Z -> A" };
+}
+
+function emptyProfile(name = "Default View"): ProfileFile {
+  return {
+    version: 1,
+    activeView: name,
+    views: []
+  };
 }
 
 function countConditions(node: FilterNode): number {
@@ -130,10 +185,11 @@ export function Explorer() {
   const [entity, setEntity] = useState<Entity>("sample");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [globalSearch, setGlobalSearch] = useState("");
-  const [searchField, setSearchField] = useState("all");
+  const [searchField, setSearchField] = useState("group_id");
   const [filterDraft, setFilterDraft] = useState<FilterNode>(emptyFilter);
   const [filter, setFilter] = useState<FilterNode>(emptyFilter);
   const [visibleColumns, setVisibleColumns] = useState<Record<Entity, string[]>>({ sample: [], group: [] });
+  const [columnWidths, setColumnWidths] = useState<Record<Entity, Record<string, number>>>({ sample: {}, group: {} });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
@@ -153,15 +209,24 @@ export function Explorer() {
   const [mapGradientBy, setMapGradientBy] = useState<MapGradientBy>("snp_1240k");
   const [mapPresentation, setMapPresentation] = useState<MapPresentation>("sample_cloud");
   const [mapShowGroupCounts, setMapShowGroupCounts] = useState(true);
-  const [mapShowOutlierLinks, setMapShowOutlierLinks] = useState(true);
+  const [mapShowOutlierLinks, setMapShowOutlierLinks] = useState(false);
   const [mapShowLegend, setMapShowLegend] = useState(true);
   const [mapProjectionMode, setMapProjectionMode] = useState<MapProjectionMode>("flat");
   const [mapTotal, setMapTotal] = useState(0);
   const [mapReview, setMapReview] = useState<MapReviewData | null>(null);
   const [mapIssuePopoverOpen, setMapIssuePopoverOpen] = useState(false);
   const [panelMode, setPanelMode] = useState<PanelMode>(null);
+  const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
+  const [timePanelOpen, setTimePanelOpen] = useState(false);
+  const [profiles, setProfiles] = useState<ProfileFile>(() => emptyProfile());
+  const [activeProfileName, setActiveProfileName] = useState("Default View");
+  const [persistHydrated, setPersistHydrated] = useState(false);
   const [draggedProperty, setDraggedProperty] = useState<string | null>(null);
   const [propertyDropTarget, setPropertyDropTarget] = useState<{ id: string; position: "before" | "after" } | null>(null);
+  const [draggedSortIndex, setDraggedSortIndex] = useState<number | null>(null);
+  const [sortDropTarget, setSortDropTarget] = useState<{ index: number; position: "before" | "after" } | null>(null);
+  const profileImportRef = useRef<HTMLInputElement | null>(null);
+  const panelResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const tableQueryCacheRef = useRef(new Map<string, { rows: Record<string, unknown>[]; total: number; releaseName: string | null }>());
 
   useEffect(() => {
@@ -201,6 +266,144 @@ export function Explorer() {
     window.localStorage.setItem(periodStorageKey, JSON.stringify(periodOptions));
   }, [periodOptions, periodOptionsHydrated]);
 
+  function buildCurrentProfileView(name = activeProfileName): ProfileView {
+    return {
+      name,
+      type: viewMode,
+      entity,
+      filters: filter,
+      sort: sortingToSortSpecs(sorting),
+      order: visibleColumns,
+      columnSize: columnWidths,
+      search: {
+        query: globalSearch,
+        field: searchField
+      },
+      timeWindow,
+      periods: periodOptions,
+      admixtureRunId,
+      pageSize,
+      map: {
+        baseStyle: mapBaseStyle,
+        colorMode: mapColorMode,
+        colorBy: mapColorBy,
+        gradientBy: mapGradientBy,
+        presentation: mapPresentation,
+        showGroupCounts: mapShowGroupCounts,
+        showOutlierLinks: mapShowOutlierLinks,
+        showLegend: mapShowLegend,
+        projectionMode: mapProjectionMode
+      },
+      panel: {
+        rightWidth: panelWidth,
+        timeOpen: timePanelOpen
+      }
+    };
+  }
+
+  function applyProfileView(view: ProfileView) {
+    if (!schema) return;
+    const sampleColumns = sanitizeColumnIds(view.order?.sample, schema.sampleFields, schema.defaults.sample);
+    const groupColumns = sanitizeColumnIds(view.order?.group, schema.groupFields, schema.defaults.group);
+    setActiveProfileName(view.name);
+    setViewMode(view.type);
+    setEntity(view.entity);
+    setFilter(view.filters ?? emptyFilter);
+    setFilterDraft(view.filters ?? emptyFilter);
+    setSorting(sortSpecsToSorting(view.sort));
+    setVisibleColumns({ sample: sampleColumns, group: groupColumns });
+    setColumnWidths({
+      sample: sanitizeColumnWidths(view.columnSize?.sample, schema.sampleFields),
+      group: sanitizeColumnWidths(view.columnSize?.group, schema.groupFields)
+    });
+    setGlobalSearch(view.search?.query ?? "");
+    setSearchField(view.search?.field ?? "group_id");
+    if (view.timeWindow) setTimeWindow(view.timeWindow);
+    if (view.periods?.length) setPeriodOptions(view.periods);
+    setAdmixtureRunId(view.admixtureRunId ?? null);
+    setPageSize(view.pageSize && view.pageSize > 0 ? view.pageSize : 100);
+    setMapBaseStyle((view.map?.baseStyle as MapBaseStyle) ?? "light");
+    setMapColorMode((view.map?.colorMode as MapColorMode) ?? "fixed");
+    setMapColorBy((view.map?.colorBy as MapColorBy) ?? "sex");
+    setMapGradientBy((view.map?.gradientBy as MapGradientBy) ?? "snp_1240k");
+    setMapPresentation((view.map?.presentation as MapPresentation) ?? "sample_cloud");
+    setMapShowGroupCounts(view.map?.showGroupCounts !== false);
+    setMapShowOutlierLinks(Boolean(view.map?.showOutlierLinks));
+    setMapShowLegend(view.map?.showLegend !== false);
+    setMapProjectionMode((view.map?.projectionMode as MapProjectionMode) ?? "flat");
+    setPanelWidth(clampPanelWidth(view.panel?.rightWidth ?? DEFAULT_PANEL_WIDTH));
+    setTimePanelOpen(Boolean(view.panel?.timeOpen));
+    setPage(1);
+    setPanelMode(null);
+  }
+
+  useEffect(() => {
+    if (!schema || persistHydrated) return;
+    try {
+      const stored = window.localStorage.getItem(explorerStorageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        const normalized = parseProfileText(stringifyProfileFile(parsed), schema);
+        setProfiles(normalized);
+        const active = normalized.views.find((view) => view.name === normalized.activeView) ?? normalized.views[0];
+        if (active) applyProfileView(active);
+      } else {
+        const initial = buildCurrentProfileView("Default View");
+        setProfiles({ version: 1, activeView: initial.name, views: [initial] });
+      }
+    } catch {
+      const initial = buildCurrentProfileView("Default View");
+      setProfiles({ version: 1, activeView: initial.name, views: [initial] });
+    } finally {
+      setPersistHydrated(true);
+    }
+  }, [schema, persistHydrated]);
+
+  useEffect(() => {
+    if (!schema || !persistHydrated) return;
+    const currentView = buildCurrentProfileView(activeProfileName);
+    const nextProfiles: ProfileFile = {
+      version: 1,
+      activeView: activeProfileName,
+      views: profiles.views.length
+        ? profiles.views.map((view) => (view.name === activeProfileName ? currentView : view))
+        : [currentView]
+    };
+    try {
+      window.localStorage.setItem(explorerStorageKey, JSON.stringify(nextProfiles));
+    } catch {
+      // Local persistence is best-effort; the app remains usable without it.
+    }
+  }, [
+    schema,
+    persistHydrated,
+    activeProfileName,
+    profiles.views,
+    viewMode,
+    entity,
+    filter,
+    sorting,
+    visibleColumns,
+    columnWidths,
+    globalSearch,
+    searchField,
+    timeWindow,
+    periodOptions,
+    admixtureRunId,
+    pageSize,
+    mapBaseStyle,
+    mapColorMode,
+    mapColorBy,
+    mapGradientBy,
+    mapPresentation,
+    mapShowGroupCounts,
+    mapShowOutlierLinks,
+    mapShowLegend,
+    mapProjectionMode,
+    panelWidth,
+    timePanelOpen
+  ]);
+
   const allFields = useMemo(() => {
     if (!schema) return [];
     return entity === "sample" ? schema.sampleFields : schema.groupFields;
@@ -230,7 +433,7 @@ export function Explorer() {
   useEffect(() => {
     if (!schema || viewMode === "map") return;
 
-    const sort = sorting.map((entry) => ({ field: entry.id, direction: entry.desc ? "desc" : "asc" }));
+    const sort = sortingToSortSpecs(sorting);
     const requestBody = {
       entity,
       view: viewMode,
@@ -327,7 +530,7 @@ export function Explorer() {
     setFilter(emptyFilter);
     setTimeWindow(fullTimeWindow);
     setGlobalSearch("");
-    setSearchField("all");
+    setSearchField("group_id");
     setSorting([]);
     setAdmixtureRunId(null);
     setPage(1);
@@ -369,6 +572,134 @@ export function Explorer() {
     if (!firstAvailable) return;
     setSorting((current) => [...current, { id: firstAvailable.id, desc: false }]);
     setPage(1);
+  }
+
+  function updateSortDropTarget(event: React.DragEvent<HTMLElement>, index: number) {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position = event.clientY > rect.top + rect.height / 2 ? "after" : "before";
+    setSortDropTarget({ index, position });
+  }
+
+  function reorderSortRule(fromIndex: number, targetIndex: number, position: "before" | "after") {
+    if (fromIndex === targetIndex) return;
+    setSorting((current) => {
+      const item = current[fromIndex];
+      if (!item) return current;
+      const withoutItem = current.filter((_, index) => index !== fromIndex);
+      const adjustedTarget = fromIndex < targetIndex ? targetIndex - 1 : targetIndex;
+      const insertIndex = position === "after" ? adjustedTarget + 1 : adjustedTarget;
+      return [...withoutItem.slice(0, insertIndex), item, ...withoutItem.slice(insertIndex)];
+    });
+    setPage(1);
+  }
+
+  function saveCurrentProfile(profilesFile = profiles) {
+    const current = buildCurrentProfileView(activeProfileName);
+    const views = profilesFile.views.some((view) => view.name === activeProfileName)
+      ? profilesFile.views.map((view) => (view.name === activeProfileName ? current : view))
+      : [...profilesFile.views, current];
+    return { version: 1 as const, activeView: activeProfileName, views };
+  }
+
+  function switchProfile(name: string) {
+    const savedProfiles = saveCurrentProfile();
+    const target = savedProfiles.views.find((view) => view.name === name);
+    if (!target) return;
+    setProfiles(savedProfiles);
+    applyProfileView(target);
+  }
+
+  function profileNameFromPrompt(message: string, fallback: string) {
+    const name = window.prompt(message, fallback)?.trim();
+    if (!name) return null;
+    if (profiles.views.some((view) => view.name === name && view.name !== activeProfileName)) {
+      window.alert(`A profile named "${name}" already exists.`);
+      return null;
+    }
+    return name;
+  }
+
+  function createProfile() {
+    if (!schema) return;
+    const name = profileNameFromPrompt("New profile name", "Untitled View");
+    if (!name) return;
+    const view: ProfileView = {
+      ...buildCurrentProfileView(name),
+      filters: emptyFilter,
+      sort: [],
+      search: { query: "", field: "group_id" },
+      timeWindow: fullTimeWindow,
+      order: { sample: schema.defaults.sample, group: schema.defaults.group },
+      columnSize: { sample: {}, group: {} }
+    };
+    setProfiles((current) => ({ version: 1, activeView: name, views: [...saveCurrentProfile(current).views, view] }));
+    applyProfileView(view);
+  }
+
+  function duplicateProfile() {
+    const name = profileNameFromPrompt("Duplicate profile as", `${activeProfileName} Copy`);
+    if (!name) return;
+    const view = { ...buildCurrentProfileView(name), name };
+    setProfiles((current) => ({ version: 1, activeView: name, views: [...saveCurrentProfile(current).views, view] }));
+    applyProfileView(view);
+  }
+
+  function renameProfile() {
+    const name = profileNameFromPrompt("Rename profile", activeProfileName);
+    if (!name || name === activeProfileName) return;
+    const currentView = buildCurrentProfileView(name);
+    setProfiles((current) => ({
+      version: 1,
+      activeView: name,
+      views: saveCurrentProfile(current).views.map((view) => (view.name === activeProfileName ? currentView : view))
+    }));
+    setActiveProfileName(name);
+  }
+
+  async function importProfiles(file: File | null | undefined) {
+    if (!file || !schema) return;
+    try {
+      const text = await file.text();
+      const imported = parseProfileText(text, schema);
+      setProfiles(imported);
+      const active = imported.views.find((view) => view.name === imported.activeView) ?? imported.views[0];
+      if (active) applyProfileView(active);
+    } catch (profileError) {
+      window.alert(profileError instanceof Error ? profileError.message : "Profile import failed.");
+    } finally {
+      if (profileImportRef.current) profileImportRef.current.value = "";
+    }
+  }
+
+  function exportProfiles() {
+    const nextProfiles = saveCurrentProfile();
+    const blob = new Blob([stringifyProfileFile(nextProfiles)], { type: "application/yaml;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${activeProfileName.replace(/[^a-z0-9_-]+/gi, "_").toLowerCase()}${PROFILE_FILE_EXTENSION}`;
+    link.click();
+    window.URL.revokeObjectURL(url);
+  }
+
+  function startPanelResize(event: React.PointerEvent) {
+    event.preventDefault();
+    panelResizeRef.current = { startX: event.clientX, startWidth: panelWidth };
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const active = panelResizeRef.current;
+      if (!active) return;
+      setPanelWidth(clampPanelWidth(active.startWidth + moveEvent.clientX - active.startX));
+    };
+    const onPointerUp = () => {
+      panelResizeRef.current = null;
+      document.body.classList.remove("is-resizing-panel");
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", onPointerUp);
+    };
+    document.body.classList.add("is-resizing-panel");
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerup", onPointerUp);
   }
 
   return (
@@ -514,6 +845,42 @@ export function Explorer() {
       </header>
 
       <div className={`toolbar ${isSearchExpanded ? "search-expanded" : ""}`}>
+        <div className="toolbar-section profile-control">
+          <select className="select profile-select" value={activeProfileName} onChange={(event) => switchProfile(event.target.value)} aria-label="Profile">
+            {profiles.views.length ? (
+              profiles.views.map((profile) => (
+                <option key={profile.name} value={profile.name}>
+                  {profile.name}
+                </option>
+              ))
+            ) : (
+              <option value={activeProfileName}>{activeProfileName}</option>
+            )}
+          </select>
+          <button className="icon-button" type="button" onClick={createProfile} title="New profile" aria-label="New profile">
+            <Plus size={15} />
+          </button>
+          <button className="icon-button" type="button" onClick={duplicateProfile} title="Duplicate profile" aria-label="Duplicate profile">
+            <Copy size={15} />
+          </button>
+          <button className="icon-button" type="button" onClick={renameProfile} title="Rename profile" aria-label="Rename profile">
+            <Edit3 size={15} />
+          </button>
+          <button className="icon-button" type="button" onClick={() => profileImportRef.current?.click()} title="Import profiles" aria-label="Import profiles">
+            <Upload size={15} />
+          </button>
+          <button className="icon-button" type="button" onClick={exportProfiles} title="Export profiles" aria-label="Export profiles">
+            <Download size={15} />
+          </button>
+          <input
+            ref={profileImportRef}
+            type="file"
+            accept=".yml,.yaml,.archaebase.yml"
+            hidden
+            onChange={(event) => void importProfiles(event.target.files?.[0])}
+          />
+        </div>
+
         <button
           className={`button icon-label toolbar-action ${panelMode === "filters" ? "active" : ""}`}
           type="button"
@@ -591,11 +958,14 @@ export function Explorer() {
             }}
             aria-label="Search field"
           >
+            <option value="group_id">Group ID</option>
             <option value="all">All Fields</option>
             {schema?.sampleFields.map((field) => (
+              field.id === "group_id" ? null : (
               <option key={field.id} value={field.id}>
                 {field.label}
               </option>
+              )
             ))}
           </select>
         </div>
@@ -618,6 +988,8 @@ export function Explorer() {
         <TimeWindow
           value={timeWindow}
           periodOptions={periodOptions}
+          open={timePanelOpen}
+          onOpenChange={setTimePanelOpen}
           onChange={(next) => {
             setTimeWindow(next);
             setPage(1);
@@ -626,8 +998,20 @@ export function Explorer() {
 
       </div>
 
+      {timePanelOpen ? (
+        <TimeWindowPanel
+          value={timeWindow}
+          periodOptions={periodOptions}
+          onChange={(next) => {
+            setTimeWindow(next);
+            setPage(1);
+          }}
+        />
+      ) : null}
+
       <div className="content">
-        <aside className={`side-panel ${panelMode ? "open" : ""}`} aria-hidden={!panelMode}>
+        <aside className={`side-panel ${panelMode ? "open" : ""}`} style={panelMode ? { width: panelWidth } : undefined} aria-hidden={!panelMode}>
+          {panelMode ? <div className="side-panel-resizer" onPointerDown={startPanelResize} role="separator" aria-orientation="vertical" title="Resize panel" /> : null}
           <div className="panel-header">
             <span>{panelMode === "columns" ? "Properties" : panelMode === "sort" ? "Sort" : panelMode === "settings" ? "Settings" : "Filters"}</span>
             <button className="icon-button" type="button" onClick={() => setPanelMode(null)} aria-label="Close panel">
@@ -678,8 +1062,44 @@ export function Explorer() {
             <section>
               <div className="sort-list">
                 {sorting.length ? (
-                  sorting.map((rule, index) => (
-                    <div className="sort-row" key={`${rule.id}-${index}`}>
+                  sorting.map((rule, index) => {
+                    const field = sortableFields.find((candidate) => candidate.id === rule.id);
+                    const labels = sortDirectionLabels(field);
+                    return (
+                    <div
+                      className={[
+                        "sort-row",
+                        draggedSortIndex === index ? "dragging" : "",
+                        sortDropTarget?.index === index ? `drop-${sortDropTarget.position}` : ""
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                      key={`${rule.id}-${index}`}
+                      draggable
+                      onDragStart={(event) => {
+                        setDraggedSortIndex(index);
+                        setSortDropTarget(null);
+                        event.dataTransfer.setData("text/plain", String(index));
+                        event.dataTransfer.effectAllowed = "move";
+                      }}
+                      onDragOver={(event) => updateSortDropTarget(event, index)}
+                      onDragEnter={(event) => updateSortDropTarget(event, index)}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        const draggedIndex = Number(event.dataTransfer.getData("text/plain"));
+                        const position = sortDropTarget?.index === index ? sortDropTarget.position : "before";
+                        if (Number.isInteger(draggedIndex)) reorderSortRule(draggedIndex, index, position);
+                        setDraggedSortIndex(null);
+                        setSortDropTarget(null);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedSortIndex(null);
+                        setSortDropTarget(null);
+                      }}
+                    >
+                      <span className="drag-handle" title="Drag sort priority">
+                        <GripVertical size={14} />
+                      </span>
                       <select
                         className="select"
                         value={rule.id}
@@ -696,20 +1116,20 @@ export function Explorer() {
                         value={rule.desc ? "desc" : "asc"}
                         onChange={(event) => updateSortRule(index, { ...rule, desc: event.target.value === "desc" })}
                       >
-                        <option value="asc">Asc</option>
-                        <option value="desc">Desc</option>
+                        <option value="asc">{labels.asc}</option>
+                        <option value="desc">{labels.desc}</option>
                       </select>
                       <button className="icon-button" type="button" onClick={() => removeSortRule(index)} aria-label="Remove sort">
                         <Trash2 size={15} />
                       </button>
                     </div>
-                  ))
+                  );})
                 ) : (
                   <p className="panel-empty">No sort rules. Table headers can also sort columns.</p>
                 )}
               </div>
               <div className="panel-footer">
-                <button className="button primary" type="button" onClick={addSortRule} disabled={!sortableFields.length || sorting.length >= 3}>
+                <button className="button primary" type="button" onClick={addSortRule} disabled={!sortableFields.length || sorting.length >= MAX_SORT_RULES}>
                   <Plus size={15} />
                   Add sort
                 </button>
@@ -789,7 +1209,7 @@ export function Explorer() {
                       />
                     </label>
                     <label className="settings-row">
-                      <span>Outlier links</span>
+                      <span>Show outlier links</span>
                       <input type="checkbox" checked={mapShowOutlierLinks} onChange={(event) => setMapShowOutlierLinks(event.target.checked)} />
                     </label>
                     <label className="settings-row">
@@ -927,7 +1347,8 @@ export function Explorer() {
                     setPage(1);
                   }}
                   onColumnOrderChange={reorderVisibleColumn}
-                  columnWidthStorageKey={`archaebase:${entity}:column-widths`}
+                  columnWidths={columnWidths[entity] ?? {}}
+                  onColumnWidthsChange={(next) => setColumnWidths((current) => ({ ...current, [entity]: next }))}
                   showAdmixture={admixtureRunId !== null}
                 />
               ) : (
@@ -946,6 +1367,7 @@ export function Explorer() {
                   showOutlierLinks={mapShowOutlierLinks}
                   showLegend={mapShowLegend}
                   projectionMode={mapProjectionMode}
+                  onProjectionModeChange={setMapProjectionMode}
                   onSummaryChange={handleMapSummaryChange}
                   onReviewChange={handleMapReviewChange}
                 />

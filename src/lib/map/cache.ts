@@ -1,15 +1,16 @@
 import type { Pool, PoolClient } from "pg";
+import { periodInfo } from "@/lib/periods";
 import { assessCoordinate } from "./coordinate-sanity";
 import type { MapColorBy, MapColorTheme, MapGradientBy } from "./types";
 
 export const MAP_CACHE_DEFAULTS = {
-  offsetScale: 5,
-  sampleAnchorZoom: 13.25,
-  groupAnchorZoom: 12.9,
-  sampleSpacingPx: 16,
-  groupSpacingPx: 22,
-  maxSampleOffsetM: 18000,
-  maxGroupOffsetM: 24000,
+  offsetScale: 8,
+  sampleAnchorZoom: 12.5,
+  groupAnchorZoom: 12.2,
+  sampleSpacingPx: 18,
+  groupSpacingPx: 24,
+  maxSampleOffsetM: 42000,
+  maxGroupOffsetM: 52000,
   sameSiteRadiusKm: 25,
   groupOutlierLinkKm: 75
 };
@@ -265,18 +266,6 @@ const categoricalPaletteDark = [
 
 const DATE_MEAN_BP_GRADIENT_MAX = 60000;
 
-const periodBuckets = [
-  { label: "Paleolithic", startYear: -300000, endYear: -10000, light: "#334e68", dark: "#8fb7ff" },
-  { label: "Mesolithic", startYear: -10000, endYear: -8000, light: "#7f1d5a", dark: "#ff4fb3" },
-  { label: "Neolithic", startYear: -8000, endYear: -4500, light: "#2f6f4f", dark: "#35e6a9" },
-  { label: "Chalcolithic", startYear: -4500, endYear: -3300, light: "#8a6f2a", dark: "#f5d547" },
-  { label: "Bronze Age", startYear: -3300, endYear: -1200, light: "#9a3412", dark: "#fb923c" },
-  { label: "Iron Age", startYear: -1200, endYear: -500, light: "#5b4b8a", dark: "#c4b5fd" },
-  { label: "Classical", startYear: -500, endYear: 500, light: "#0f766e", dark: "#2dd4bf" },
-  { label: "Medieval", startYear: 500, endYear: 1500, light: "#be185d", dark: "#f472b6" },
-  { label: "Modern", startYear: 1500, endYear: 3000, light: "#475569", dark: "#94a3b8" }
-];
-
 function mergedOptions(options: MapRebuildOptions = {}) {
   return { ...MAP_CACHE_DEFAULTS, ...options };
 }
@@ -314,9 +303,27 @@ function normalizeSex(value: string | null) {
   return "Unknown";
 }
 
-function firstHaplogroupLetter(value: string | null) {
-  const match = asText(value).trim().match(/[A-Za-z]/);
-  return match ? match[0].toUpperCase() : "Unknown";
+type HaplogroupKind = "y" | "mtdna";
+
+const missingHaplogroupPattern =
+  /^(?:n\s*\/\s*a|n\.?\s*a\.?|na|none|null|unknown|unk|not[\s_-]*(?:reported|determined|available)|no[\s_-]*data|[.?-]+)(?:$|[\s([<])/i;
+const yHaplogroupInitials = new Set("ABCDEFGHIJKLMNOPQRST".split(""));
+const mtdnaHaplogroupInitials = new Set("ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""));
+
+export function informativeHaplogroup(value: string | null | undefined) {
+  const text = asText(value).trim().replace(/\s+/g, " ");
+  if (!text || missingHaplogroupPattern.test(text)) return "";
+  return text;
+}
+
+function firstHaplogroupLetter(value: string | null | undefined, kind: HaplogroupKind) {
+  const text = informativeHaplogroup(value);
+  const match = text.match(/[A-Za-z]/);
+  if (!match) return "Unknown";
+
+  const initial = match[0].toUpperCase();
+  const allowed = kind === "y" ? yHaplogroupInitials : mtdnaHaplogroupInitials;
+  return allowed.has(initial) ? initial : "Unknown";
 }
 
 function groupKey(row: { id: string | number; genetic_id: string | null; group_id: string | null }) {
@@ -536,24 +543,9 @@ export function fixedLabelForRow(row: Pick<MapCacheSourceRow, "molecular_sex" | 
   if (field === "single") return "Matched samples";
   if (field === "sex") return normalizeSex(row.molecular_sex);
   if (field === "data_type") return asText(row.data_type) || "Unknown";
-  if (field === "y_haplogroup_initial") return firstHaplogroupLetter(asText(row.y_hap_isogg) || asText(row.y_hap_terminal));
-  if (field === "mtdna_initial") return firstHaplogroupLetter(row.mtdna_haplogroup);
+  if (field === "y_haplogroup_initial") return firstHaplogroupLetter(row.y_hap_isogg, "y");
+  if (field === "mtdna_initial") return firstHaplogroupLetter(row.mtdna_haplogroup, "mtdna");
   return periodInfo(row.date_mean_bp).label;
-}
-
-function periodInfo(dateMeanBp: number | null) {
-  if (dateMeanBp === null || !Number.isFinite(dateMeanBp)) {
-    return { label: "Unknown", sort: 999, light: UNKNOWN_COLOR, dark: UNKNOWN_COLOR };
-  }
-  const year = 1950 - dateMeanBp;
-  const bucket = periodBuckets.find((candidate) => year >= candidate.startYear && year < candidate.endYear);
-  if (!bucket) return { label: "Unknown", sort: 999, light: UNKNOWN_COLOR, dark: UNKNOWN_COLOR };
-  return {
-    label: bucket.label,
-    sort: periodBuckets.indexOf(bucket),
-    light: bucket.light,
-    dark: bucket.dark
-  };
 }
 
 function fixedColorInfo(row: Pick<MapCacheSourceRow, "molecular_sex" | "data_type" | "y_hap_terminal" | "y_hap_isogg" | "mtdna_haplogroup" | "date_mean_bp">, field: MapColorBy) {

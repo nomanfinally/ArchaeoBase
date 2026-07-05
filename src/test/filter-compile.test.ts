@@ -45,6 +45,31 @@ describe("filter compiler", () => {
     expect(compiled.params).toEqual(["Unknown"]);
   });
 
+  it("compiles expanded text operators with parameters", () => {
+    const compiled = compileSampleFilter({
+      type: "group",
+      op: "and",
+      children: [
+        { type: "condition", field: "group_id", operator: "ends_with", value: "BA" },
+        { type: "condition", field: "locality", operator: "contains_any", value: "Cave, Valley" },
+        { type: "condition", field: "publication", operator: "not_contains_all", value: ["draft", "preprint"] }
+      ]
+    });
+
+    expect(compiled.text).toContain("s.group_id ILIKE $1");
+    expect(compiled.text).toContain("OR");
+    expect(compiled.text).toContain("NOT ILIKE");
+    expect(compiled.params).toEqual(["%BA", "%Cave%", "%Valley%", "%draft%", "%preprint%"]);
+  });
+
+  it("compiles period name filters through the registry", () => {
+    const compiled = compileSampleFilter({ type: "condition", field: "period", operator: "equals", value: "Neolithic" });
+
+    expect(compiled.text).toContain("date_mean_bp");
+    expect(compiled.text).toContain("= $1");
+    expect(compiled.params).toEqual(["Neolithic"]);
+  });
+
   it("compiles slash-delimited global regex search", () => {
     const compiled = compileGlobalSearch("/Cuba_.*AG/", "group_id");
     expect(compiled.text).toContain("~* $1");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   flexRender,
   getCoreRowModel,
@@ -19,8 +19,9 @@ type Props = {
   visibleColumns: string[];
   sorting: SortingState;
   onSortingChange: (sorting: SortingState) => void;
-  onColumnOrderChange: (draggedId: string, targetId: string) => void;
-  columnWidthStorageKey: string;
+  onColumnOrderChange: (draggedId: string, targetId: string, position: "before" | "after") => void;
+  columnWidths: Record<string, number>;
+  onColumnWidthsChange: (widths: Record<string, number>) => void;
   showAdmixture: boolean;
 };
 
@@ -51,34 +52,18 @@ export function DataTable({
   sorting,
   onSortingChange,
   onColumnOrderChange,
-  columnWidthStorageKey,
+  columnWidths,
+  onColumnWidthsChange,
   showAdmixture
 }: Props) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const resizeRef = useRef<{ id: string; startX: number; startWidth: number } | null>(null);
-  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [columnDropTarget, setColumnDropTarget] = useState<{ id: string; position: "before" | "after" } | null>(null);
   const fieldById = useMemo(() => new Map(fields.map((field) => [field.id, field])), [fields]);
   const activeFields = useMemo(
     () => visibleColumns.map((fieldId) => fieldById.get(fieldId)).filter((field): field is FieldDefinition => Boolean(field)),
     [fieldById, visibleColumns]
   );
-
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(columnWidthStorageKey);
-      setColumnWidths(stored ? JSON.parse(stored) : {});
-    } catch {
-      setColumnWidths({});
-    }
-  }, [columnWidthStorageKey]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(columnWidthStorageKey, JSON.stringify(columnWidths));
-    } catch {
-      // Local storage is a convenience only; resizing still works without it.
-    }
-  }, [columnWidths, columnWidthStorageKey]);
 
   useEffect(() => {
     const element = parentRef.current;
@@ -115,7 +100,7 @@ export function DataTable({
       const active = resizeRef.current;
       if (!active) return;
       const nextWidth = clampColumnWidth(active.startWidth + moveEvent.clientX - active.startX);
-      setColumnWidths((current) => ({ ...current, [active.id]: nextWidth }));
+      onColumnWidthsChange({ ...columnWidths, [active.id]: nextWidth });
     };
 
     const onPointerUp = () => {
@@ -135,12 +120,19 @@ export function DataTable({
     const sampleValues = rows.slice(0, 150).map((row) => formatValue(row[columnId]));
     const longest = [label, ...sampleValues].reduce((max, value) => Math.max(max, value.length), 0);
     const nextWidth = columnId === "admixture" ? 170 : clampColumnWidth(longest * 7.2 + 42);
-    setColumnWidths((current) => ({ ...current, [columnId]: nextWidth }));
+    onColumnWidthsChange({ ...columnWidths, [columnId]: nextWidth });
   }
 
   function columnStyle(columnId: string) {
     const width = getColumnWidth(columnId);
     return { width, flexBasis: width };
+  }
+
+  function updateColumnDropTarget(event: ReactDragEvent<HTMLElement>, columnId: string) {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position = event.clientX > rect.left + rect.width / 2 ? "after" : "before";
+    setColumnDropTarget({ id: columnId, position });
   }
 
   const columns = useMemo<ColumnDef<Record<string, unknown>>[]>(() => {
@@ -200,31 +192,46 @@ export function DataTable({
             const columnId = header.column.id;
             return (
               <div
-                className="th"
+                className={[
+                  "th",
+                  columnDropTarget?.id === columnId ? `drop-${columnDropTarget.position}` : ""
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
                 key={header.id}
                 style={columnStyle(columnId)}
                 suppressHydrationWarning
                 draggable={columnId !== "admixture"}
                 onDragStart={(event) => {
+                  if (!event.altKey || columnId === "admixture") {
+                    event.preventDefault();
+                    return;
+                  }
                   event.dataTransfer.setData("text/plain", columnId);
                   event.dataTransfer.effectAllowed = "move";
                 }}
                 onDragOver={(event) => {
-                  if (columnId !== "admixture") event.preventDefault();
+                  if (columnId !== "admixture") updateColumnDropTarget(event, columnId);
+                }}
+                onDragEnter={(event) => {
+                  if (columnId !== "admixture") updateColumnDropTarget(event, columnId);
                 }}
                 onDrop={(event) => {
                   event.preventDefault();
                   const draggedId = event.dataTransfer.getData("text/plain");
+                  const position = columnDropTarget?.id === columnId ? columnDropTarget.position : "before";
                   if (draggedId && draggedId !== columnId && columnId !== "admixture") {
-                    onColumnOrderChange(draggedId, columnId);
+                    onColumnOrderChange(draggedId, columnId, position);
                   }
+                  setColumnDropTarget(null);
                 }}
+                onDragEnd={() => setColumnDropTarget(null)}
               >
                 <button
                   type="button"
                   onClick={header.column.getToggleSortingHandler()}
                   disabled={!header.column.getCanSort()}
-                  title={header.column.getCanSort() ? "Sort column" : undefined}
+                  title={header.column.getCanSort() ? "Sort column. Alt-drag the header to reorder." : "Alt-drag the header to reorder."}
                 >
                   <span>{flexRender(header.column.columnDef.header, header.getContext())}</span>
                   {sorted === "asc" ? <ArrowUp size={13} /> : sorted === "desc" ? <ArrowDown size={13} /> : <ChevronsUpDown size={13} />}

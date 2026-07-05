@@ -1,10 +1,19 @@
+import { buildPeriodLabelSql } from "@/lib/periods";
+
 export type FieldKind = "text" | "enum" | "number" | "year" | "boolean";
 export type EntityKind = "sample" | "group";
 
 export type Operator =
   | "contains"
   | "not_contains"
+  | "contains_any"
+  | "contains_all"
+  | "not_contains_any"
+  | "not_contains_all"
   | "starts_with"
+  | "not_starts_with"
+  | "ends_with"
+  | "not_ends_with"
   | "equals"
   | "not_equals"
   | "in"
@@ -47,18 +56,7 @@ function sampleField(
   };
 }
 
-const PERIOD_SAMPLE_COLUMN = `CASE
-  WHEN s.date_mean_bp IS NULL THEN NULL
-  WHEN 1950 - s.date_mean_bp < -10000 THEN 'Paleolithic'
-  WHEN 1950 - s.date_mean_bp < -8000 THEN 'Mesolithic'
-  WHEN 1950 - s.date_mean_bp < -4500 THEN 'Neolithic'
-  WHEN 1950 - s.date_mean_bp < -3300 THEN 'Chalcolithic'
-  WHEN 1950 - s.date_mean_bp < -1200 THEN 'Bronze Age'
-  WHEN 1950 - s.date_mean_bp < -500 THEN 'Iron Age'
-  WHEN 1950 - s.date_mean_bp < 500 THEN 'Classical'
-  WHEN 1950 - s.date_mean_bp < 1500 THEN 'Medieval'
-  ELSE 'Modern'
-END`;
+const PERIOD_SAMPLE_COLUMN = buildPeriodLabelSql("s.date_mean_bp");
 
 export const sampleFields = [
   sampleField("genetic_id", "Genetic ID", "text", { defaultVisible: true }),
@@ -155,6 +153,14 @@ export const groupFields = [
     sortable: true
   },
   {
+    id: "period_names",
+    label: "Periods",
+    kind: "text",
+    groupColumn: "g.period_names",
+    defaultVisible: true,
+    sortable: true
+  },
+  {
     id: "y_hap_isogg_list",
     label: "Y Haplogroups ISOGG",
     kind: "text",
@@ -232,7 +238,22 @@ export const groupFieldById = Object.fromEntries(groupFields.map((field) => [fie
 >;
 
 export const operatorsByKind: Record<FieldKind, Operator[]> = {
-  text: ["contains", "not_contains", "starts_with", "equals", "not_equals", "is_empty", "is_not_empty"],
+  text: [
+    "contains",
+    "not_contains",
+    "contains_any",
+    "contains_all",
+    "not_contains_any",
+    "not_contains_all",
+    "starts_with",
+    "not_starts_with",
+    "ends_with",
+    "not_ends_with",
+    "equals",
+    "not_equals",
+    "is_empty",
+    "is_not_empty"
+  ],
   enum: ["equals", "not_equals", "in", "not_in", "is_empty", "is_not_empty"],
   number: ["equals", "not_equals", "gt", "gte", "lt", "lte", "between", "is_empty", "is_not_empty"],
   year: ["equals", "not_equals", "gt", "gte", "lt", "lte", "between", "is_empty", "is_not_empty"],

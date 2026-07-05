@@ -33,6 +33,15 @@ function coerceTextArray(value: unknown) {
   return [];
 }
 
+function compileTextPatternList(column: string, values: string[], state: CompileState, joiner: "AND" | "OR", negateEach: boolean) {
+  if (!values.length) return "TRUE";
+  const pieces = values.map((item) => {
+    const param = addParam(state, `%${item}%`);
+    return negateEach ? `${column} NOT ILIKE ${param}` : `${column} ILIKE ${param}`;
+  });
+  return pieces.length === 1 ? pieces[0] : `(${pieces.join(` ${joiner} `)})`;
+}
+
 function compileCondition(condition: FilterCondition, state: CompileState): string {
   const field = sampleFieldById[condition.field];
   if (!field?.filterable || !field.sampleColumn) {
@@ -64,9 +73,41 @@ function compileCondition(condition: FilterCondition, state: CompileState): stri
       const param = addParam(state, `%${String(value ?? "")}%`);
       return `(${column} IS NULL OR ${column} NOT ILIKE ${param})`;
     }
+    if (condition.operator === "contains_any") {
+      const values = coerceTextArray(value);
+      if (!values.length) return "TRUE";
+      return compileTextPatternList(column, values, state, "OR", false);
+    }
+    if (condition.operator === "contains_all") {
+      const values = coerceTextArray(value);
+      if (!values.length) return "TRUE";
+      return compileTextPatternList(column, values, state, "AND", false);
+    }
+    if (condition.operator === "not_contains_any") {
+      const values = coerceTextArray(value);
+      if (!values.length) return "TRUE";
+      return `(${column} IS NULL OR ${compileTextPatternList(column, values, state, "AND", true)})`;
+    }
+    if (condition.operator === "not_contains_all") {
+      const values = coerceTextArray(value);
+      if (!values.length) return "TRUE";
+      return `(${column} IS NULL OR ${compileTextPatternList(column, values, state, "OR", true)})`;
+    }
     if (condition.operator === "starts_with") {
       const param = addParam(state, `${String(value ?? "")}%`);
       return `${column} ILIKE ${param}`;
+    }
+    if (condition.operator === "not_starts_with") {
+      const param = addParam(state, `${String(value ?? "")}%`);
+      return `(${column} IS NULL OR ${column} NOT ILIKE ${param})`;
+    }
+    if (condition.operator === "ends_with") {
+      const param = addParam(state, `%${String(value ?? "")}`);
+      return `${column} ILIKE ${param}`;
+    }
+    if (condition.operator === "not_ends_with") {
+      const param = addParam(state, `%${String(value ?? "")}`);
+      return `(${column} IS NULL OR ${column} NOT ILIKE ${param})`;
     }
     if (condition.operator === "equals") {
       const param = addParam(state, String(value ?? ""));
@@ -108,8 +149,8 @@ function compileCondition(condition: FilterCondition, state: CompileState): stri
 }
 
 function compileNode(node: FilterNode, state: CompileState, depth: number): string {
-  if (depth > 3) {
-    throw new Error("Advanced filters support up to 3 nested group levels.");
+  if (depth > 6) {
+    throw new Error("Advanced filters support up to 6 nested group levels.");
   }
 
   if (node.type === "condition") {

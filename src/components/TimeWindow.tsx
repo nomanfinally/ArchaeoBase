@@ -1,7 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, CalendarRange, X } from "lucide-react";
+import { useMemo, useState } from "react";
+import { CalendarRange } from "lucide-react";
+import {
+  defaultPeriodOptions,
+  MAX_YEAR,
+  MIN_YEAR,
+  PRESENT_YEAR,
+  type PeriodOption
+} from "@/lib/periods";
+export { defaultPeriodOptions, MAX_YEAR, MIN_YEAR, PRESENT_YEAR, type PeriodOption } from "@/lib/periods";
 
 export type TimeWindowValue = {
   startYear: number;
@@ -11,28 +19,8 @@ export type TimeWindowValue = {
 
 type TimeMode = "calendar" | "bp";
 type Era = "BCE" | "CE";
-export type PeriodOption = {
-  label: string;
-  startYear: number;
-  endYear: number;
-};
-
-const MIN_YEAR = -50000;
-const MAX_YEAR = 2026;
-const PRESENT_YEAR = 1950;
 const STEP = 50;
 export const periodStorageKey = "archaebase:time-periods";
-
-export const defaultPeriodOptions: PeriodOption[] = [
-  { label: "Paleolithic", startYear: MIN_YEAR, endYear: -10000 },
-  { label: "Mesolithic", startYear: -10000, endYear: -8000 },
-  { label: "Neolithic", startYear: -8000, endYear: -3300 },
-  { label: "Bronze Age", startYear: -3300, endYear: -1200 },
-  { label: "Iron Age", startYear: -1200, endYear: -500 },
-  { label: "Classical", startYear: -800, endYear: 500 },
-  { label: "Medieval", startYear: 500, endYear: 1500 },
-  { label: "Modern", startYear: 1500, endYear: MAX_YEAR }
-];
 
 const ticks = [
   MIN_YEAR,
@@ -80,6 +68,22 @@ function tickLabelForMode(year: number, mode: TimeMode) {
   return formatInteger(year);
 }
 
+function periodAbbreviation(label: string) {
+  const labels: Record<string, string> = {
+    Full: "All",
+    Paleolithic: "Paleo",
+    Mesolithic: "Meso",
+    Neolithic: "Neo",
+    Chalcolithic: "Chalc",
+    "Bronze Age": "BA",
+    "Iron Age": "IA",
+    Classical: "Class",
+    Medieval: "Med",
+    Modern: "Mod"
+  };
+  return labels[label] ?? label;
+}
+
 function clampStart(value: number, endYear: number) {
   return Math.min(endYear, Math.max(MIN_YEAR, value));
 }
@@ -108,16 +112,6 @@ function bpFromYear(year: number) {
 
 function yearFromBp(bp: number) {
   return PRESENT_YEAR - Math.max(0, Math.round(bp));
-}
-
-function derivePeriodWindow(periods: PeriodOption[], fromLabel: string, toLabel: string): TimeWindowValue | null {
-  const fromIndex = periods.findIndex((period) => period.label === fromLabel);
-  const toIndex = periods.findIndex((period) => period.label === toLabel);
-  if (fromIndex < 0 || toIndex < 0) return null;
-
-  const first = periods[Math.min(fromIndex, toIndex)];
-  const last = periods[Math.max(fromIndex, toIndex)];
-  return { startYear: first.startYear, endYear: last.endYear };
 }
 
 function periodWindowForLabels(periods: PeriodOption[], labels: Set<string>) {
@@ -164,6 +158,8 @@ type Props = {
   value: TimeWindowValue;
   onChange: (value: TimeWindowValue) => void;
   periodOptions: PeriodOption[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 };
 
 type TimePeriodSettingsProps = {
@@ -253,37 +249,28 @@ export function TimePeriodSettings({ periodOptions, onChange }: TimePeriodSettin
   );
 }
 
-export function TimeWindow({ value, onChange, periodOptions }: Props) {
-  const [open, setOpen] = useState(false);
+export function TimeWindow({ value, periodOptions: _periodOptions, open, onOpenChange }: Props) {
+  const [mode] = useState<TimeMode>("calendar");
+  const label = useMemo(() => `${labelForMode(value.startYear, mode)} - ${labelForMode(value.endYear, mode)}`, [value, mode]);
+
+  return (
+    <div className="time-window">
+      <button className={`button time-window-button ${open ? "active" : ""}`} type="button" onClick={() => onOpenChange(!open)}>
+        <CalendarRange size={15} />
+        <span>{label}</span>
+      </button>
+    </div>
+  );
+}
+
+export function TimeWindowPanel({ value, onChange, periodOptions }: Pick<Props, "value" | "onChange" | "periodOptions">) {
   const [mode, setMode] = useState<TimeMode>("calendar");
   const [lastPeriodClick, setLastPeriodClick] = useState<string | null>(null);
-  const popoverRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-
-    const onPointerDown = (event: PointerEvent) => {
-      if (!popoverRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
-
-  const label = useMemo(() => `${labelForMode(value.startYear, mode)} — ${labelForMode(value.endYear, mode)}`, [value, mode]);
   const startPercent = percentForYear(value.startYear);
   const endPercent = percentForYear(value.endYear);
   const startCalendar = calendarParts(value.startYear);
   const endCalendar = calendarParts(value.endYear);
-  const selectedStartPeriod = periodOptions.find((period) => period.startYear === value.startYear)?.label ?? "";
-  const selectedEndPeriod = periodOptions.find((period) => period.endYear === value.endYear)?.label ?? "";
   const presets = useMemo(() => [{ label: "Full", startYear: MIN_YEAR, endYear: MAX_YEAR }, ...periodOptions], [periodOptions]);
   const checkedPeriods = useMemo(() => new Set(selectedPeriodLabels(periodOptions, value)), [periodOptions, value]);
   const displayIntervals = value.intervals?.length ? value.intervals : [{ startYear: value.startYear, endYear: value.endYear }];
@@ -294,19 +281,6 @@ export function TimeWindow({ value, onChange, periodOptions }: Props) {
 
   function setEndYear(nextYear: number) {
     onChange({ startYear: value.startYear, endYear: clampEnd(nextYear, value.startYear) });
-  }
-
-  function setPeriodRange(nextStartLabel: string, nextEndLabel: string) {
-    const nextWindow = derivePeriodWindow(periodOptions, nextStartLabel, nextEndLabel);
-    if (!nextWindow) return;
-
-    const fromIndex = periodOptions.findIndex((period) => period.label === nextStartLabel);
-    const toIndex = periodOptions.findIndex((period) => period.label === nextEndLabel);
-    const selectedPeriods = periodOptions.slice(Math.min(fromIndex, toIndex), Math.max(fromIndex, toIndex) + 1);
-    onChange({
-      ...nextWindow,
-      intervals: selectedPeriods.map((period) => ({ startYear: period.startYear, endYear: period.endYear, label: period.label }))
-    });
   }
 
   function togglePeriod(label: string, shiftKey: boolean) {
@@ -330,32 +304,9 @@ export function TimeWindow({ value, onChange, periodOptions }: Props) {
   }
 
   return (
-    <div className="time-window" ref={popoverRef}>
-      <button className={`button time-window-button ${open ? "active" : ""}`} type="button" onClick={() => setOpen((current) => !current)}>
-        <CalendarRange size={15} />
-        <span>{label}</span>
-      </button>
-
-      {open ? (
-        <div className="time-window-popover">
-          <div className="time-window-header">
-            <strong>Time Window</strong>
-            <div className="time-window-header-actions">
-              <div className="mini-segmented" aria-label="Time input mode">
-                <button type="button" className={mode === "calendar" ? "active" : ""} onClick={() => setMode("calendar")}>
-                  BCE/CE
-                </button>
-                <button type="button" className={mode === "bp" ? "active" : ""} onClick={() => setMode("bp")}>
-                  BP
-                </button>
-              </div>
-              <button className="icon-button" type="button" onClick={() => setOpen(false)} aria-label="Close time window">
-                <X size={15} />
-              </button>
-            </div>
-          </div>
-
-          <div className="time-window-inputs">
+    <div className="time-window-panel">
+      <div className="time-window-panel-grid">
+        <div className="time-window-inputs">
             {mode === "calendar" ? (
               <>
                 <label className="time-field">
@@ -427,54 +378,9 @@ export function TimeWindow({ value, onChange, periodOptions }: Props) {
                 </label>
               </>
             )}
-          </div>
+        </div>
 
-          <div className="period-range-picker">
-            <span className="period-range-title">Period Range</span>
-            <div className="period-range-controls">
-              <label>
-                <span>From</span>
-                <select
-                  className="select"
-                  value={selectedStartPeriod}
-                  onChange={(event) => {
-                    const nextStart = event.target.value;
-                    if (!nextStart) return;
-                    setPeriodRange(nextStart, selectedEndPeriod || nextStart);
-                  }}
-                >
-                  <option value="">Custom</option>
-                  {periodOptions.map((period) => (
-                    <option key={period.label} value={period.label}>
-                      {period.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <ArrowRight className="period-range-arrow" size={17} aria-hidden="true" />
-              <label>
-                <span>To</span>
-                <select
-                  className="select"
-                  value={selectedEndPeriod}
-                  onChange={(event) => {
-                    const nextEnd = event.target.value;
-                    if (!nextEnd) return;
-                    setPeriodRange(selectedStartPeriod || nextEnd, nextEnd);
-                  }}
-                >
-                  <option value="">Custom</option>
-                  {periodOptions.map((period) => (
-                    <option key={period.label} value={period.label}>
-                      {period.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </div>
-
-          <div className="range-panel">
+        <div className="range-panel">
             <div className="time-window-readout">
               <span>{labelForMode(value.startYear, mode)}</span>
               <span>{labelForMode(value.endYear, mode)}</span>
@@ -492,7 +398,7 @@ export function TimeWindow({ value, onChange, periodOptions }: Props) {
               <div className="range-handle-marker" style={{ left: `${startPercent}%` }} />
               <div className="range-handle-marker" style={{ left: `${endPercent}%` }} />
               <div className="range-ticks" aria-hidden="true">
-                {ticks.map((tick) => (
+                {ticks.filter((tick) => tick !== MIN_YEAR && tick !== MAX_YEAR).map((tick) => (
                   <span key={tick} style={{ left: `${percentForYear(tick)}%` }}>
                     <i />
                     <em>{tickLabelForMode(tick, mode)}</em>
@@ -521,13 +427,19 @@ export function TimeWindow({ value, onChange, periodOptions }: Props) {
               />
             </div>
 
-            <div className="time-window-bounds">
-              <span>{labelForMode(MIN_YEAR, mode)}</span>
-              <span>{labelForMode(MAX_YEAR, mode)}</span>
+            <div className="range-mode-row">
+              <div className="mini-segmented" aria-label="Time input mode">
+                <button type="button" className={mode === "calendar" ? "active" : ""} onClick={() => setMode("calendar")}>
+                  BCE/CE
+                </button>
+                <button type="button" className={mode === "bp" ? "active" : ""} onClick={() => setMode("bp")}>
+                  BP
+                </button>
+              </div>
             </div>
-          </div>
+        </div>
 
-          <div className="period-presets">
+        <div className="period-presets">
             {presets.map((preset) => (
               <button
                 key={preset.label}
@@ -535,7 +447,7 @@ export function TimeWindow({ value, onChange, periodOptions }: Props) {
                   ? value.startYear === preset.startYear && value.endYear === preset.endYear ? "active" : ""
                   : checkedPeriods.has(preset.label) ? "active" : ""}
                 type="button"
-                title={preset.label === "Full" ? undefined : "Shift-click to select a continuous period range"}
+                title={preset.label === "Full" ? "Full range" : `${preset.label}. Shift-click to select a continuous period range`}
                 onClick={(event) => {
                   if (preset.label === "Full") {
                     setLastPeriodClick(null);
@@ -546,13 +458,11 @@ export function TimeWindow({ value, onChange, periodOptions }: Props) {
                 }}
               >
                 <span className="period-check" aria-hidden="true" />
-                <span className="period-label">{preset.label}</span>
+                <span className="period-label">{periodAbbreviation(preset.label)}</span>
               </button>
             ))}
-          </div>
-
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }

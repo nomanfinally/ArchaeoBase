@@ -1,6 +1,7 @@
 import { getLatestReleaseId, getPool } from "@/lib/db";
 import { compileGlobalSearch, compileMapBounds, compileSampleFilter, mergeWhere } from "@/lib/filters/compile";
 import type { QueryRequest, SortSpec, SqlFragment } from "@/lib/filters/types";
+import { buildPeriodLabelSql, buildPeriodSortSql } from "@/lib/periods";
 import { groupFieldById, sampleFieldById, sampleFields } from "@/lib/schema/fields";
 
 const SAMPLE_SELECT_COLUMNS = [
@@ -25,6 +26,7 @@ const SAMPLE_MAP_SELECT_COLUMNS = [
 
 const MAX_PAGE_SIZE = 500;
 const MAX_MAP_SIZE = 30000;
+const MAX_SORT_RULES = 8;
 
 function clampPage(value: unknown) {
   const page = Number(value ?? 1);
@@ -60,7 +62,7 @@ function buildOrderBy(sort: SortSpec[] | undefined, entity: QueryRequest["entity
   if (!sort?.length) return fallback;
 
   const pieces = sort
-    .slice(0, 3)
+    .slice(0, MAX_SORT_RULES)
     .map((spec) => {
       const direction = spec.direction === "desc" ? "DESC" : "ASC";
       const field = entity === "sample" ? sampleFieldById[spec.field] : groupFieldById[spec.field];
@@ -164,7 +166,10 @@ async function queryGroups(request: QueryRequest) {
 
   const baseCte = `
     WITH filtered_samples AS (
-      SELECT s.*
+      SELECT
+        s.*,
+        ${buildPeriodLabelSql("s.date_mean_bp")} AS period_name,
+        ${buildPeriodSortSql("s.date_mean_bp")} AS period_sort
       FROM samples s
       WHERE ${where.text}
     ),
@@ -180,6 +185,19 @@ async function queryGroups(request: QueryRequest) {
         count(DISTINCT CASE WHEN fs.has_coordinates THEN concat(fs.latitude, ',', fs.longitude) END)::integer AS coordinate_count,
         string_agg(DISTINCT fs.molecular_sex, ', ' ORDER BY fs.molecular_sex) AS molecular_sexes,
         string_agg(DISTINCT fs.publication, ', ' ORDER BY fs.publication) AS publications,
+        array_to_string(
+          ARRAY(
+            SELECT grouped_periods.period_name
+            FROM (
+              SELECT fp.period_name, min(fp.period_sort) AS period_sort
+              FROM filtered_samples fp
+              WHERE fp.group_id = fs.group_id AND fp.period_name IS NOT NULL
+              GROUP BY fp.period_name
+              ORDER BY min(fp.period_sort), fp.period_name
+            ) grouped_periods
+          ),
+          ', '
+        ) AS period_names,
         string_agg(DISTINCT fs.y_hap_isogg, ', ' ORDER BY fs.y_hap_isogg) AS y_hap_isogg_list,
         string_agg(DISTINCT fs.mtdna_haplogroup, ', ' ORDER BY fs.mtdna_haplogroup) AS mtdna_haplogroups,
         min(fs.date_mean_bp) AS date_min_bp,

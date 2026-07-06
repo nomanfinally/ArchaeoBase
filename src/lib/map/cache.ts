@@ -662,13 +662,13 @@ function colorForCategory(label: string, field: MapColorBy, theme: MapColorTheme
   }
   if (field === "y_haplogroup_initial" || field === "mtdna_initial") {
     const specialColors: Record<string, { light: string; dark: string }> = {
-      "No Y-DNA (female)": { light: "#be185d", dark: "#ff1493" },
-      "Y-DNA n/a (sex unknown)": { light: "#475569", dark: "#64748b" },
-      "Y-DNA n/a (<2x)": { light: "#7c3aed", dark: "#c084fc" },
+      "No Y-DNA (female)": { light: "#6b7280", dark: "#9ca3af" },
+      "Y-DNA n/a (sex unknown)": { light: "#4b5563", dark: "#6b7280" },
+      "Y-DNA n/a (<2x)": { light: "#374151", dark: "#4b5563" },
       "Y-DNA n/a (unknown)": { light: "#111827", dark: "#000000" },
       "Y-DNA n/a (not reported)": { light: "#020617", dark: "#000000" },
-      "mtDNA n/a (<2x)": { light: "#9333ea", dark: "#e879f9" },
-      "mtDNA n/a (unknown)": { light: "#334155", dark: "#64748b" },
+      "mtDNA n/a (<2x)": { light: "#52525b", dark: "#71717a" },
+      "mtDNA n/a (unknown)": { light: "#27272a", dark: "#3f3f46" },
       "mtDNA n/a (not reported)": { light: "#020617", dark: "#000000" }
     };
     const color = specialColors[label]?.[theme];
@@ -803,10 +803,10 @@ const smartAgeSegmentDefinitions: Array<{
     marks: ["Iron Age", "Classical", "Medieval", "Modern"],
     min: 0,
     max: 3150,
-    startColorLight: "#059669",
-    endColorLight: "#db2777",
-    startColorDark: "#10b981",
-    endColorDark: "#ff1493"
+    startColorLight: "#0f766e",
+    endColorLight: "#65a30d",
+    startColorDark: "#14b8a6",
+    endColorDark: "#84cc16"
   }
 ];
 

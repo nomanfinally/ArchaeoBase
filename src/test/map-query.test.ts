@@ -18,6 +18,7 @@ function row(overrides: Partial<MapCacheSourceRow>): MapCacheSourceRow {
     group_id: "G1",
     locality: "Site",
     political_entity: "Cuba",
+    regions: null,
     date_mean_bp: 3850,
     date_mean_year_ce: -1900,
     coverage_1150k: 0.5,
@@ -140,8 +141,10 @@ describe("map cache helpers", () => {
 
     expect(prepared.samples[0].y_haplogroup_initial_label).toBe("No Y-DNA (female)");
     expect(prepared.samples[0].y_haplogroup_initial_color_light).not.toBe(UNKNOWN_COLOR);
+    expect(prepared.samples[0].y_haplogroup_initial_color_dark).not.toBe("#ff1493");
     expect(prepared.samples[0].mtdna_initial_label).toBe("mtDNA n/a (<2x)");
     expect(prepared.samples[0].mtdna_initial_color_light).not.toBe(UNKNOWN_COLOR);
+    expect(prepared.samples[0].mtdna_initial_color_dark).not.toBe("#e879f9");
     expect(prepared.samples[1].y_haplogroup_initial_label).toBe("R");
     expect(prepared.samples[1].mtdna_initial_label).toBe("H");
   });

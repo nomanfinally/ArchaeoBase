@@ -19,6 +19,7 @@ export type ProfileMapSettings = {
   showOutlierLinks?: boolean;
   showCentroids?: boolean;
   showLegend?: boolean;
+  fadeLegend?: boolean;
   projectionMode?: string;
 };
 
@@ -285,6 +286,7 @@ export function normalizeProfileView(raw: unknown, schema: ProfileSchema, option
       showOutlierLinks: asBoolean(mapObject?.showOutlierLinks),
       showCentroids: asBoolean(mapObject?.showCentroids),
       showLegend: asBoolean(mapObject?.showLegend),
+      fadeLegend: asBoolean(mapObject?.fadeLegend),
       projectionMode: asString(mapObject?.projectionMode, undefined as unknown as string)
     },
     panel: {

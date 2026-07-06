@@ -18,6 +18,8 @@
 - Population-cluster marker colors normalize known AADR suffix tokens such as `.AG`, `.TW`, and `.AG.TW` before assigning colors, so suffix-only data-type variants of the same group receive the same cached population color.
 - `Age BP (split)` is intentionally not a calibrated-width numeric scale in the legend. The four macro segments are equal width so labels remain readable; tick marks inside each segment show which period/subperiod belongs to that color range.
 - Population-cluster styling uses a capped palette of 12 colors. The cache still assigns nearby groups divergent colors when possible, but the legend is aggregated by color class instead of listing every group ID.
+- Absent Y-DNA and mtDNA states use only black/grey shades. Labels can still distinguish female, low coverage, unknown, and not reported states, but absence itself should not be encoded with bright sex or haplogroup colors.
+- Map legend fading is a user setting. Full-map mode is transient UI state and is not saved to profiles.
 
 ## Regions And View State
 

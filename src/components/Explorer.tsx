@@ -226,6 +226,8 @@ export function Explorer() {
   const [mapShowOutlierLinks, setMapShowOutlierLinks] = useState(false);
   const [mapShowCentroids, setMapShowCentroids] = useState(true);
   const [mapShowLegend, setMapShowLegend] = useState(true);
+  const [mapFadeLegend, setMapFadeLegend] = useState(true);
+  const [mapFullView, setMapFullView] = useState(false);
   const [mapProjectionMode, setMapProjectionMode] = useState<MapProjectionMode>("flat");
   const [mapTotal, setMapTotal] = useState(0);
   const [mapReview, setMapReview] = useState<MapReviewData | null>(null);
@@ -309,6 +311,7 @@ export function Explorer() {
         showOutlierLinks: mapShowOutlierLinks,
         showCentroids: mapShowCentroids,
         showLegend: mapShowLegend,
+        fadeLegend: mapFadeLegend,
         projectionMode: mapProjectionMode
       },
       panel: {
@@ -349,6 +352,7 @@ export function Explorer() {
     setMapShowOutlierLinks(Boolean(view.map?.showOutlierLinks));
     setMapShowCentroids(view.map?.showCentroids !== false);
     setMapShowLegend(view.map?.showLegend !== false);
+    setMapFadeLegend(view.map?.fadeLegend !== false);
     setMapProjectionMode((view.map?.projectionMode as MapProjectionMode) ?? "flat");
     setPanelWidth(clampPanelWidth(view.panel?.rightWidth ?? DEFAULT_PANEL_WIDTH));
     setTimePanelOpen(Boolean(view.panel?.timeOpen));
@@ -420,6 +424,7 @@ export function Explorer() {
     mapShowOutlierLinks,
     mapShowCentroids,
     mapShowLegend,
+    mapFadeLegend,
     mapProjectionMode,
     panelWidth,
     timePanelOpen
@@ -806,8 +811,59 @@ export function Explorer() {
     document.addEventListener("pointerup", onPointerUp);
   }
 
+  const mapFullViewActive = viewMode === "map" && mapFullView;
+
+  function renderSearchControl(extraClass = "") {
+    return (
+      <div className={`toolbar-section search-control ${extraClass}`.trim()}>
+        <Search size={15} />
+        <input
+          className="input"
+          value={globalSearch}
+          placeholder="Search or /regex/"
+          onChange={(event) => {
+            setGlobalSearch(event.target.value);
+            setPage(1);
+          }}
+        />
+        {globalSearch ? (
+          <button
+            className="search-clear"
+            type="button"
+            aria-label="Clear search"
+            onClick={() => {
+              setGlobalSearch("");
+              setPage(1);
+            }}
+          >
+            <X size={14} />
+          </button>
+        ) : null}
+        <select
+          className="search-field-select"
+          value={searchField}
+          onChange={(event) => {
+            setSearchField(event.target.value);
+            setPage(1);
+          }}
+          aria-label="Search field"
+        >
+          <option value="group_id">Group ID</option>
+          <option value="all">All Fields</option>
+          {schema?.sampleFields.map((field) => (
+            field.id === "group_id" ? null : (
+              <option key={field.id} value={field.id}>
+                {field.label}
+              </option>
+            )
+          ))}
+        </select>
+      </div>
+    );
+  }
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${mapFullViewActive ? "map-full-view" : ""}`}>
       <header className="topbar">
         <div className="topbar-left">
           <div className="brand">
@@ -995,50 +1051,7 @@ export function Explorer() {
           <span className="toolbar-label">Sort{sorting.length ? ` ${sorting.length}` : ""}</span>
         </button>
 
-        <div className="toolbar-section search-control">
-          <Search size={15} />
-          <input
-            className="input"
-            value={globalSearch}
-            placeholder="Search or /regex/"
-            onChange={(event) => {
-              setGlobalSearch(event.target.value);
-              setPage(1);
-            }}
-          />
-          {globalSearch ? (
-            <button
-              className="search-clear"
-              type="button"
-              aria-label="Clear search"
-              onClick={() => {
-                setGlobalSearch("");
-                setPage(1);
-              }}
-            >
-              <X size={14} />
-            </button>
-          ) : null}
-          <select
-            className="search-field-select"
-            value={searchField}
-            onChange={(event) => {
-              setSearchField(event.target.value);
-              setPage(1);
-            }}
-            aria-label="Search field"
-          >
-            <option value="group_id">Group ID</option>
-            <option value="all">All Fields</option>
-            {schema?.sampleFields.map((field) => (
-              field.id === "group_id" ? null : (
-              <option key={field.id} value={field.id}>
-                {field.label}
-              </option>
-              )
-            ))}
-          </select>
-        </div>
+        {renderSearchControl()}
 
         <button
           className={`button icon-label toolbar-action ${panelMode === "columns" ? "active" : ""}`}
@@ -1068,17 +1081,50 @@ export function Explorer() {
 
       </div>
 
+      {mapFullViewActive ? (
+        <div className="map-full-controls">
+          {renderSearchControl("map-full-search")}
+          <TimeWindow
+            value={timeWindow}
+            periodOptions={periodOptions}
+            mode={timeMode}
+            open={timePanelOpen}
+            onOpenChange={setTimePanelOpen}
+            onModeChange={setTimeMode}
+            onChange={(next) => {
+              setTimeWindow(next);
+              setPage(1);
+            }}
+          />
+        </div>
+      ) : null}
+
       {timePanelOpen ? (
-        <TimeWindowPanel
-          value={timeWindow}
-          periodOptions={periodOptions}
-          mode={timeMode}
-          onModeChange={setTimeMode}
-          onChange={(next) => {
-            setTimeWindow(next);
-            setPage(1);
-          }}
-        />
+        mapFullViewActive ? (
+          <div className="map-full-time-panel">
+            <TimeWindowPanel
+              value={timeWindow}
+              periodOptions={periodOptions}
+              mode={timeMode}
+              onModeChange={setTimeMode}
+              onChange={(next) => {
+                setTimeWindow(next);
+                setPage(1);
+              }}
+            />
+          </div>
+        ) : (
+          <TimeWindowPanel
+            value={timeWindow}
+            periodOptions={periodOptions}
+            mode={timeMode}
+            onModeChange={setTimeMode}
+            onChange={(next) => {
+              setTimeWindow(next);
+              setPage(1);
+            }}
+          />
+        )
       ) : null}
 
       <div className="content">
@@ -1364,6 +1410,15 @@ export function Explorer() {
                         <span>Legend</span>
                         <input type="checkbox" checked={mapShowLegend} onChange={(event) => setMapShowLegend(event.target.checked)} />
                       </label>
+                      <label className={`settings-row ${!mapShowLegend ? "disabled" : ""}`}>
+                        <span>Fade legend</span>
+                        <input
+                          type="checkbox"
+                          checked={mapFadeLegend}
+                          disabled={!mapShowLegend}
+                          onChange={(event) => setMapFadeLegend(event.target.checked)}
+                        />
+                      </label>
                     </div>
                     <div className="settings-block">
                       <span className="settings-title">Map Geometry</span>
@@ -1498,6 +1553,9 @@ export function Explorer() {
                   showOutlierLinks={mapShowOutlierLinks}
                   showCentroids={mapShowCentroids}
                   showLegend={mapShowLegend}
+                  fadeLegend={mapFadeLegend}
+                  fullView={viewMode === "map" && mapFullView}
+                  onFullViewChange={setMapFullView}
                   projectionMode={mapProjectionMode}
                   onProjectionModeChange={setMapProjectionMode}
                   onSummaryChange={handleMapSummaryChange}

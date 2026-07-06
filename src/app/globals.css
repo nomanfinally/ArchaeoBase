@@ -60,6 +60,29 @@ button:disabled {
   overflow: hidden;
 }
 
+.app-shell.map-full-view > .topbar,
+.app-shell.map-full-view > .toolbar {
+  display: none;
+}
+
+.app-shell.map-full-view .content {
+  background: #0f1115;
+}
+
+.app-shell.map-full-view .side-panel {
+  display: none;
+}
+
+.app-shell.map-full-view .main {
+  padding: 0;
+}
+
+.app-shell.map-full-view .result-window.map-mode {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .topbar {
   position: relative;
   z-index: 8;
@@ -379,6 +402,68 @@ button:disabled {
 .search-clear:hover {
   color: var(--text);
   background: var(--panel-hover);
+}
+
+.map-full-controls {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(760px, calc(100vw - 112px));
+  transform: translateX(-50%);
+  opacity: 0.38;
+  transition: opacity 140ms ease;
+}
+
+.map-full-controls:hover,
+.map-full-controls:focus-within {
+  opacity: 0.98;
+}
+
+.map-full-controls .map-full-search {
+  flex: 1 1 auto;
+  max-width: none;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 8px 22px rgba(15, 15, 15, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.map-full-controls .time-window {
+  flex: 0 0 auto;
+}
+
+.map-full-controls .time-window-button {
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 8px 22px rgba(15, 15, 15, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.map-full-time-panel {
+  position: fixed;
+  top: 58px;
+  left: 50%;
+  z-index: 79;
+  width: min(1120px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  opacity: 0.34;
+  transition: opacity 140ms ease;
+}
+
+.map-full-time-panel:hover,
+.map-full-time-panel:focus-within {
+  opacity: 0.98;
+}
+
+.map-full-time-panel .time-window-panel {
+  border: 1px solid rgba(216, 213, 206, 0.86);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 10px 28px rgba(15, 15, 15, 0.18);
+  backdrop-filter: blur(12px);
 }
 
 .admixture-select {
@@ -2215,7 +2300,7 @@ button:disabled {
   backdrop-filter: blur(10px);
   color: var(--text);
   font-size: 12px;
-  opacity: 0.46;
+  opacity: 0.94;
   transition: opacity 140ms ease;
 }
 
@@ -2274,7 +2359,7 @@ button:disabled {
   backdrop-filter: blur(10px);
   color: var(--text);
   font-size: 12px;
-  opacity: 0.42;
+  opacity: 0.88;
 }
 
 .map-legend-toggle-categorical {
@@ -2322,7 +2407,7 @@ button:disabled {
   overflow-y: auto;
   overflow-x: hidden;
   gap: 6px;
-  opacity: 0.32;
+  opacity: 0.94;
 }
 
 .map-legend-categorical span {
@@ -2374,7 +2459,30 @@ button:disabled {
   max-width: min(390px, calc(100% - 28px));
   gap: 6px;
   justify-content: stretch;
+  opacity: 0.94;
+}
+
+.map-legend-fade .map-legend {
+  opacity: 0.46;
+}
+
+.map-legend-fade .map-legend-categorical {
+  opacity: 0.32;
+}
+
+.map-legend-fade .map-legend-gradient {
   opacity: 0.52;
+}
+
+.map-legend-fade .map-legend-toggle {
+  opacity: 0.42;
+}
+
+.map-legend-fade .map-legend:hover,
+.map-legend-fade .map-legend:focus-within,
+.map-legend-fade .map-legend-toggle:hover,
+.map-legend-fade .map-legend-toggle:focus-visible {
+  opacity: 1;
 }
 
 .map-gradient-bar {

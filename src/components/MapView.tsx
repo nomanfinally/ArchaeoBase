@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Feature, FeatureCollection, LineString, Point } from "geojson";
 import type { GeoJSONSource, IControl, Map as MapLibreMap, MapMouseEvent, Popup, StyleSpecification } from "maplibre-gl";
-import { Eye, EyeOff, Globe2, Map as MapIcon, Moon, Route, Satellite, Sun } from "lucide-react";
+import { Eye, EyeOff, Globe2, Map as MapIcon, Maximize2, Minimize2, Moon, Route, Satellite, Sun } from "lucide-react";
 import type { FilterNode } from "@/lib/filters/types";
 import type {
   MapColorBy,
@@ -37,6 +37,9 @@ type Props = {
   showOutlierLinks: boolean;
   showCentroids: boolean;
   showLegend: boolean;
+  fadeLegend: boolean;
+  fullView: boolean;
+  onFullViewChange: (fullView: boolean) => void;
   projectionMode: MapProjectionMode;
   onProjectionModeChange: (mode: MapProjectionMode) => void;
   onSummaryChange: (summary: MapQuerySummary, release: MapQueryResponse["release"]) => void;
@@ -479,16 +482,31 @@ function zoomPercent(map: MapLibreMap) {
 function MapControlStack({
   baseStyle,
   projectionMode,
+  fullView,
   onBaseStyleChange,
-  onProjectionModeChange
+  onProjectionModeChange,
+  onFullViewChange
 }: {
   baseStyle: MapBaseStyle;
   projectionMode: MapProjectionMode;
+  fullView: boolean;
   onBaseStyleChange: (style: MapBaseStyle) => void;
   onProjectionModeChange: (mode: MapProjectionMode) => void;
+  onFullViewChange: (fullView: boolean) => void;
 }) {
   return (
     <>
+      <div className="map-control-group" aria-label="View size">
+        <button
+          className={fullView ? "active" : ""}
+          type="button"
+          onClick={() => onFullViewChange(!fullView)}
+          aria-label={fullView ? "Exit full map" : "Full map"}
+          title={fullView ? "Exit full map" : "Full map"}
+        >
+          {fullView ? <Minimize2 size={15} strokeWidth={2.1} /> : <Maximize2 size={15} strokeWidth={2.1} />}
+        </button>
+      </div>
       <div className="map-control-group" aria-label="Map style">
         {mapBaseStyles.map((style) => {
           const Icon = mapBaseStyleIcons[style.id];
@@ -545,6 +563,9 @@ export function MapView({
   showOutlierLinks,
   showCentroids,
   showLegend,
+  fadeLegend,
+  fullView,
+  onFullViewChange,
   projectionMode,
   onProjectionModeChange,
   onSummaryChange,
@@ -612,6 +633,13 @@ export function MapView({
       map.off("idle", updateProjectionStyle);
     };
   }, [projectionMode]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    window.setTimeout(() => map.resize(), 0);
+    window.setTimeout(() => map.resize(), 180);
+  }, [fullView]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -814,7 +842,7 @@ export function MapView({
   const statusLabel = presentation === "group_locations" ? "groups" : "samples";
 
   return (
-    <div className={`map-view map-base-${baseStyle} map-projection-${projectionMode}`}>
+    <div className={`map-view map-base-${baseStyle} map-projection-${projectionMode} ${fadeLegend ? "map-legend-fade" : ""}`}>
       <div ref={containerRef} className="map-canvas" />
       {mapError ? (
         <div className="map-empty">
@@ -835,8 +863,10 @@ export function MapView({
             <MapControlStack
               baseStyle={baseStyle}
               projectionMode={projectionMode}
+              fullView={fullView}
               onBaseStyleChange={onBaseStyleChange}
               onProjectionModeChange={onProjectionModeChange}
+              onFullViewChange={onFullViewChange}
             />,
             controlHost
           )

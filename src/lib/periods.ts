@@ -20,21 +20,21 @@ export const UNKNOWN_PERIOD = {
 };
 
 export const defaultPeriodDefinitions: PeriodDefinition[] = [
-  { label: "Paleolithic", startYear: MIN_YEAR, endYear: -10050, light: "#1e3a8a", dark: "#2563eb" },
-  { label: "Mesolithic (Early)", startYear: -10050, endYear: -8050, light: "#1d4ed8", dark: "#3b82f6" },
-  { label: "Mesolithic (Late)", startYear: -8050, endYear: -6050, light: "#0369a1", dark: "#0891b2" },
-  { label: "Neolithic (EN)", startYear: -6050, endYear: -5350, light: "#854d0e", dark: "#b45309" },
-  { label: "Neolithic (MN)", startYear: -5350, endYear: -4850, light: "#92400e", dark: "#d97706" },
-  { label: "Neolithic (LN)", startYear: -4850, endYear: -4350, light: "#a16207", dark: "#ca8a04" },
-  { label: "Chalcolithic", startYear: -4350, endYear: -3350, light: "#7c2d12", dark: "#c2410c" },
-  { label: "Bronze Age (EBA)", startYear: -3350, endYear: -2350, light: "#7c3aed", dark: "#8b5cf6" },
-  { label: "Bronze Age (MBA)", startYear: -2350, endYear: -1900, light: "#a21caf", dark: "#d946ef" },
-  { label: "Bronze Age (MLBA)", startYear: -1900, endYear: -1500, light: "#e11d48", dark: "#fb7185" },
-  { label: "Bronze Age (LBA)", startYear: -1500, endYear: -1200, light: "#991b1b", dark: "#ef4444" },
-  { label: "Iron Age", startYear: -1200, endYear: -550, light: "#047857", dark: "#10b981" },
-  { label: "Classical", startYear: -550, endYear: 500, light: "#0f766e", dark: "#14b8a6" },
-  { label: "Medieval", startYear: 500, endYear: 1500, light: "#6d28d9", dark: "#a855f7" },
-  { label: "Modern", startYear: 1500, endYear: MAX_YEAR, light: "#be123c", dark: "#f43f5e" }
+  { label: "Paleolithic", startYear: MIN_YEAR, endYear: -10050, light: "#312e81", dark: "#818cf8" },
+  { label: "Mesolithic (Early)", startYear: -10050, endYear: -8050, light: "#1d4ed8", dark: "#60a5fa" },
+  { label: "Mesolithic (Late)", startYear: -8050, endYear: -6050, light: "#0e7490", dark: "#22d3ee" },
+  { label: "Neolithic (EN)", startYear: -6050, endYear: -5350, light: "#15803d", dark: "#22c55e" },
+  { label: "Neolithic (MN)", startYear: -5350, endYear: -4850, light: "#65a30d", dark: "#a3e635" },
+  { label: "Neolithic (LN)", startYear: -4850, endYear: -4350, light: "#ca8a04", dark: "#facc15" },
+  { label: "Chalcolithic", startYear: -4350, endYear: -3350, light: "#c2410c", dark: "#fb923c" },
+  { label: "Bronze Age (EBA)", startYear: -3350, endYear: -2350, light: "#7c3aed", dark: "#a78bfa" },
+  { label: "Bronze Age (MBA)", startYear: -2350, endYear: -1900, light: "#db2777", dark: "#f472b6" },
+  { label: "Bronze Age (MLBA)", startYear: -1900, endYear: -1500, light: "#dc2626", dark: "#f87171" },
+  { label: "Bronze Age (LBA)", startYear: -1500, endYear: -1200, light: "#7f1d1d", dark: "#ef4444" },
+  { label: "Iron Age", startYear: -1200, endYear: -550, light: "#334155", dark: "#94a3b8" },
+  { label: "Classical", startYear: -550, endYear: 500, light: "#0891b2", dark: "#67e8f9" },
+  { label: "Medieval", startYear: 500, endYear: 1500, light: "#6d28d9", dark: "#c084fc" },
+  { label: "Modern", startYear: 1500, endYear: MAX_YEAR, light: "#16a34a", dark: "#4ade80" }
 ];
 
 export const defaultPeriodOptions: PeriodOption[] = defaultPeriodDefinitions.map(({ label, startYear, endYear }) => ({

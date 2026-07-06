@@ -706,7 +706,7 @@ const gradientFallbackDomains: Record<MapGradientBy, GradientDomain> = {
   snp_1240k: { min: 0, max: 1200000, stops: [0, 300000, 600000, 900000, 1200000] },
   snp_2m: { min: 0, max: 2000000, stops: [0, 500000, 1000000, 1500000, 2000000] },
   coverage_1150k: { min: 0, max: 5, stops: [0, 0.5, 1, 2.5, 5] },
-  date_mean_bp: { min: 0, max: 45000, stops: [0, 5000, 10000, 20000, 45000] },
+  date_mean_bp: { min: 0, max: 54000, stops: [0, 3150, 3600, 4200, 4750, 5300, 6300, 8000, 12000, 54000] },
   smart_date_mean_bp: { min: 0, max: 45000, stops: [0, 5000, 10000, 20000, 45000] }
 };
 
@@ -717,6 +717,7 @@ function gradientValue(row: Pick<MapCacheSourceRow, "snp_1240k" | "snp_2m" | "co
 
 export function gradientColor(value: number | null, field: MapGradientBy, theme: MapColorTheme, domain: GradientDomain) {
   if (value === null) return UNKNOWN_COLOR;
+  if (field === "date_mean_bp") return ageBpColor(value, theme, domain);
   if (field === "smart_date_mean_bp") return smartAgeColor(value, theme, domain);
   const stopValues = domain.stops.length >= 2 ? domain.stops : [domain.min, domain.max];
   const palette = gradientPalette(field, theme);
@@ -738,11 +739,6 @@ export function gradientColor(value: number | null, field: MapGradientBy, theme:
 }
 
 function gradientPalette(field: MapGradientBy, theme: MapColorTheme) {
-  if (field === "date_mean_bp") {
-    return theme === "dark"
-      ? ["#38bdf8", "#22d3ee", "#facc15", "#fb923c", "#ff1744"]
-      : ["#2563eb", "#16a34a", "#facc15", "#f97316", "#dc2626"];
-  }
   if (field === "coverage_1150k") {
     return theme === "dark"
       ? ["#475569", "#0ea5e9", "#22d3a6", "#facc15", "#ff1493"]
@@ -751,6 +747,75 @@ function gradientPalette(field: MapGradientBy, theme: MapColorTheme) {
   return theme === "dark"
     ? ["#c084fc", "#0ea5e9", "#22d3a6", "#facc15", "#fb923c"]
     : ["#6d28d9", "#2563eb", "#0891b2", "#16a34a", "#f59e0b"];
+}
+
+const AGE_BP_BASE_STOPS = [0, 3150, 3600, 4200, 4750, 5300, 6300, 8000, 12000];
+
+const ageBpColorStops: Record<MapColorTheme, Array<{ value: number; color: string }>> = {
+  light: [
+    { value: 0, color: "#65a30d" },
+    { value: 3150, color: "#facc15" },
+    { value: 3600, color: "#fb923c" },
+    { value: 4200, color: "#ef4444" },
+    { value: 4750, color: "#db2777" },
+    { value: 5300, color: "#7c3aed" },
+    { value: 6300, color: "#14b8a6" },
+    { value: 8000, color: "#7dd3fc" },
+    { value: 12000, color: "#2563eb" }
+  ],
+  dark: [
+    { value: 0, color: "#84cc16" },
+    { value: 3150, color: "#fde047" },
+    { value: 3600, color: "#fb923c" },
+    { value: 4200, color: "#ef4444" },
+    { value: 4750, color: "#f472b6" },
+    { value: 5300, color: "#a78bfa" },
+    { value: 6300, color: "#2dd4bf" },
+    { value: 8000, color: "#7dd3fc" },
+    { value: 12000, color: "#3b82f6" }
+  ]
+};
+
+function ageBpAnchors(theme: MapColorTheme, domain: GradientDomain) {
+  const highValue = Math.max(domain.max, 12000);
+  const highColor = theme === "dark" ? "#0b1f5e" : "#061a4f";
+  return [...ageBpColorStops[theme], { value: highValue, color: highColor }]
+    .filter((stop, index, stops) => stops.findIndex((candidate) => candidate.value === stop.value) === index)
+    .sort((a, b) => a.value - b.value);
+}
+
+function colorFromAnchors(value: number, anchors: Array<{ value: number; color: string }>) {
+  if (value <= anchors[0].value) return anchors[0].color;
+  if (value >= anchors[anchors.length - 1].value) return anchors[anchors.length - 1].color;
+
+  for (let index = 0; index < anchors.length - 1; index += 1) {
+    const start = anchors[index];
+    const end = anchors[index + 1];
+    if (value < start.value || value > end.value) continue;
+    const local = (value - start.value) / Math.max(0.000001, end.value - start.value);
+    return interpolateColor([start.color, end.color], local);
+  }
+
+  return anchors[anchors.length - 1].color;
+}
+
+function ageBpDomain(rows: MapCacheSourceRow[]): GradientDomain {
+  const values = rows
+    .map((row) => asNumber(row.date_mean_bp))
+    .filter((value): value is number => value !== null && value >= 0 && value <= DATE_MEAN_BP_GRADIENT_MAX);
+  if (!values.length) return gradientFallbackDomains.date_mean_bp;
+
+  const max = Math.max(...values);
+  const stops = uniqueStops(
+    [...AGE_BP_BASE_STOPS.filter((value) => value <= max), max],
+    gradientFallbackDomains.date_mean_bp
+  );
+  return { min: 0, max, stops };
+}
+
+function ageBpColor(value: number, theme: MapColorTheme, domain: GradientDomain) {
+  if (value < 0 || value > DATE_MEAN_BP_GRADIENT_MAX) return UNKNOWN_COLOR;
+  return colorFromAnchors(value, ageBpAnchors(theme, domain));
 }
 
 const smartAgeSegmentDefinitions: Array<{
@@ -886,15 +951,17 @@ function uniqueStops(values: number[], fallback: GradientDomain) {
 function gradientDomains(rows: MapCacheSourceRow[]) {
   const domains = {} as Record<MapGradientBy, GradientDomain>;
   for (const field of gradientColorFields) {
+    if (field === "date_mean_bp") {
+      domains[field] = ageBpDomain(rows);
+      continue;
+    }
     if (field === "smart_date_mean_bp") {
       domains[field] = smartAgeDomain(rows);
       continue;
     }
     const values = rows
       .map((row) => gradientValue(row, field))
-      .filter((value): value is number => value !== null)
-      .map((value) => (field === "date_mean_bp" ? Math.max(0, value) : value))
-      .filter((value) => field !== "date_mean_bp" || value <= DATE_MEAN_BP_GRADIENT_MAX);
+      .filter((value): value is number => value !== null);
     if (!values.length) {
       domains[field] = gradientFallbackDomains[field];
       continue;
@@ -946,7 +1013,8 @@ function gradientStops(field: MapGradientBy, theme: MapColorTheme, domain: Gradi
       }
     ]));
   }
-  return domain.stops.map((value) => {
+  const values = field === "date_mean_bp" ? [...domain.stops].sort((a, b) => b - a) : domain.stops;
+  return values.map((value) => {
     return {
       value,
       label: formatGradientTick(value, field),

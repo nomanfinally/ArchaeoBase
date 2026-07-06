@@ -13,9 +13,10 @@
 - Haplogroup non-data states are distinct categories, not collapsed into a single `Unknown`. Examples include `No Y-DNA (female)`, `Y-DNA n/a (sex unknown)`, and `mtDNA n/a (<2x)`.
 - Popups should show Y-DNA and mtDNA rows even when values are unavailable. The value should be explicit, such as `n/a (female)` or `n/a (<2x)`, so absence of data is not confused with omission by the UI.
 - Table cells render unavailable values such as `n/a (female)`, `n/a (<2x)`, `unknown`, and `not reported` as pale italic text. This is display-only styling and does not change query, filter, or export values.
-- `Age BP` is the ordinary continuous age scale and should remain available unchanged.
-- `Age BP (split)` is a separate cached spectrum. It uses four meaningful horizontal segments: Paleolithic-Mesolithic, Neolithic-Chalcolithic, Bronze Age, and Iron Age-Modern. The normal `Age BP` gradient remains unchanged.
+- `Age BP` is the ordinary continuous age scale. Its legend runs oldest-to-youngest from left to right, keeps Paleolithic/Mesolithic values in dark-to-light blue, and uses extra Bronze Age anchors so dense Bronze Age samples receive more color separation.
+- `Age BP (split)` is a separate cached spectrum. It uses four meaningful horizontal segments: Paleolithic-Mesolithic, Neolithic-Chalcolithic, Bronze Age, and Iron Age-Modern.
 - Bronze Age now has EBA, MBA, MLBA, and LBA period labels for sample metadata, but the split-age spectrum keeps Bronze Age as one purple-to-red bar with small outside subperiod labels.
+- Categorical `Period` colors prioritize visual separation over strict within-era shade continuity. Modern is green, Iron/Classical/Medieval use cool neutral/cyan/violet colors, and Bronze Age stays in a distinct purple-to-red warm range.
 - Population-cluster marker colors normalize known AADR suffix tokens such as `.AG`, `.TW`, and `.AG.TW` before assigning colors, so suffix-only data-type variants of the same group receive the same cached population color.
 - `Age BP (split)` is intentionally not a calibrated-width numeric scale in the legend. The four macro segments are equal width so labels remain readable; tick marks inside each segment show which period/subperiod belongs to that color range.
 - Population-cluster styling uses a capped palette of 12 colors. The cache still assigns nearby groups divergent colors when possible, but the legend is aggregated by color class instead of listing every group ID.

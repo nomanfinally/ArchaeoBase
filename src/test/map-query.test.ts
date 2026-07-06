@@ -131,6 +131,10 @@ describe("map cache helpers", () => {
     const gradientLegend = prepared.legends.find((legend) => legend.color_mode === "gradient" && legend.color_field === "date_mean_bp" && legend.theme === "light");
     expect(gradientLegend?.legend_kind).toBe("gradient");
     expect(gradientLegend?.stops).toContain("color");
+    const ageStops = JSON.parse(gradientLegend?.stops ?? "[]") as Array<{ value: number; color: string }>;
+    expect(ageStops[0].value).toBe(3850);
+    expect(ageStops[ageStops.length - 1]?.value).toBe(0);
+    expect(ageStops[0].color).not.toBe(ageStops[ageStops.length - 1]?.color);
   });
 
   it("keeps haplogroup non-data reasons separate from real initials", () => {
@@ -163,6 +167,22 @@ describe("map cache helpers", () => {
     expect(periodInfo(2800).label).toBe("Iron Age");
     expect(periodInfo(53950).label).toBe("Paleolithic");
     expect(periodInfo(65000).label).toBe("Unknown");
+  });
+
+  it("keeps categorical period colors separated between Bronze Age and Modern", () => {
+    const bronzePeriods = [5000, 4000, 3700, 3300].map((dateMeanBp) => periodInfo(dateMeanBp));
+    const modern = periodInfo(100);
+
+    expect(modern.label).toBe("Modern");
+    expect(modern.light).toBe("#16a34a");
+    expect(bronzePeriods.map((period) => period.label)).toEqual([
+      "Bronze Age (EBA)",
+      "Bronze Age (MBA)",
+      "Bronze Age (MLBA)",
+      "Bronze Age (LBA)"
+    ]);
+    expect(bronzePeriods.some((period) => period.light === modern.light || period.dark === modern.dark)).toBe(false);
+    expect(new Set(bronzePeriods.map((period) => period.light)).size).toBe(bronzePeriods.length);
   });
 
   it("builds the split Age BP legend with broad period segments", () => {

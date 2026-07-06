@@ -40,6 +40,7 @@ export type MapQueryRequest = {
 };
 
 export type MapPointKind = "aggregate" | "group" | "sample" | "centroid";
+export type MapMarkerShape = "circle" | "triangle";
 
 export type MapLegendItem = {
   label: string;
@@ -90,6 +91,7 @@ export type MapPointProperties = {
   groupCount: number;
   groupId: string;
   markerColor: string;
+  markerShape: MapMarkerShape;
   colorLabel: string;
   isUnknownColor: boolean;
   originalLatitude: number;

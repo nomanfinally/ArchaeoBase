@@ -7,7 +7,7 @@ import {
   UNKNOWN_COLOR,
   type MapCacheSourceRow
 } from "@/lib/map/cache";
-import { buildMapSampleWhere } from "@/lib/map/query";
+import { buildMapSampleWhere, buildSampleFeatures } from "@/lib/map/query";
 
 function row(overrides: Partial<MapCacheSourceRow>): MapCacheSourceRow {
   return {
@@ -135,6 +135,22 @@ describe("map cache helpers", () => {
     expect(ageStops[0].value).toBe(3850);
     expect(ageStops[ageStops.length - 1]?.value).toBe(0);
     expect(ageStops[0].color).not.toBe(ageStops[ageStops.length - 1]?.color);
+  });
+
+  it("uses triangle marker shapes only for Modern sample features", () => {
+    const prepared = prepareMapCache([
+      row({ id: "1", genetic_id: "Modern", date_mean_bp: 100 }),
+      row({ id: "2", genetic_id: "Bronze", date_mean_bp: 4000 })
+    ]);
+    const { features } = buildSampleFeatures(prepared.samples, {
+      mode: "fixed",
+      fixedBy: "period",
+      gradientBy: "date_mean_bp",
+      theme: "light"
+    });
+
+    expect(features.find((feature) => feature.properties.title === "Modern")?.properties.markerShape).toBe("triangle");
+    expect(features.find((feature) => feature.properties.title === "Bronze")?.properties.markerShape).toBe("circle");
   });
 
   it("keeps haplogroup non-data reasons separate from real initials", () => {

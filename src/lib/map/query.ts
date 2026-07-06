@@ -364,8 +364,11 @@ function pointFeature(
   longitude: number,
   originalLatitude: number,
   originalLongitude: number,
-  properties: Omit<MapPointProperties, "markerId" | "kind" | "originalLatitude" | "originalLongitude" | "displayLatitude" | "displayLongitude">
+  properties: Omit<MapPointProperties, "markerId" | "kind" | "originalLatitude" | "originalLongitude" | "displayLatitude" | "displayLongitude" | "markerShape"> & {
+    markerShape?: MapPointProperties["markerShape"];
+  }
 ): Feature<Point, MapPointProperties> {
+  const { markerShape = "circle", ...rest } = properties;
   return {
     type: "Feature",
     geometry: { type: "Point", coordinates: [longitude, latitude] },
@@ -376,9 +379,18 @@ function pointFeature(
       originalLongitude,
       displayLatitude: latitude,
       displayLongitude: longitude,
-      ...properties
+      markerShape,
+      ...rest
     }
   };
+}
+
+function markerShapeForSample(row: CacheRow): MapPointProperties["markerShape"] {
+  return row.period_label === "Modern" ? "triangle" : "circle";
+}
+
+function markerShapeForGroup(rows: CacheRow[]): MapPointProperties["markerShape"] {
+  return rows.length > 0 && rows.every((row) => row.period_label === "Modern") ? "triangle" : "circle";
 }
 
 function centroidColorForGroup(rows: CacheRow[], theme: MapColorTheme) {
@@ -426,6 +438,7 @@ export function buildSampleFeatures(rows: CacheRow[], colorConfig: MapColorConfi
         groupCount: row.group_id ? 1 : 0,
         groupId: row.group_id ?? "",
         markerColor: colorInfo.color,
+        markerShape: markerShapeForSample(row),
         colorLabel: colorInfo.label,
         isUnknownColor: colorInfo.isUnknown,
         ...detail
@@ -486,6 +499,7 @@ export function buildGroupFeatures(rows: CacheRow[], colorConfig: MapColorConfig
         groupCount: 1,
         groupId,
         markerColor: colorInfo.color,
+        markerShape: markerShapeForGroup(group.rows),
         colorLabel: colorInfo.label,
         isUnknownColor: colorInfo.isUnknown,
         ...detail

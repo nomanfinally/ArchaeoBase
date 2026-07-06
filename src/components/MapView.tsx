@@ -51,8 +51,10 @@ const LINE_SOURCE_ID = "archaebase-map-lines";
 const DISPLACEMENT_LINE_LAYER_ID = "archaebase-displacement-lines";
 const OUTLIER_LINE_LAYER_ID = "archaebase-outlier-lines";
 const POINT_LAYER_ID = "archaebase-map-point-circles";
+const MODERN_POINT_LAYER_ID = "archaebase-map-modern-triangles";
 const CENTROID_LAYER_ID = "archaebase-map-centroids";
 const POINT_LABEL_LAYER_ID = "archaebase-map-point-labels";
+const MODERN_TRIANGLE_IMAGE_ID = "archaebase-modern-triangle";
 const BOUNDARY_SOURCE_ID = "archaebase-boundaries";
 const COUNTRY_BOUNDARY_LAYER_ID = "archaebase-country-boundaries";
 const REGIONAL_BOUNDARY_LAYER_ID = "archaebase-regional-boundaries";
@@ -66,6 +68,7 @@ const emptyLineCollection: FeatureCollection<LineString, MapLineProperties> = { 
 const mapResponseCache = new Map<string, MapQueryResponse>();
 const MAP_MIN_ZOOM = 1;
 const MAP_MAX_ZOOM = 22;
+const INTERACTIVE_POINT_LAYER_IDS = [MODERN_POINT_LAYER_ID, POINT_LAYER_ID];
 
 export const mapBaseStyles: { id: MapBaseStyle; label: string; swatch: string }[] = [
   { id: "dark", label: "Dark", swatch: "#111217" },
@@ -257,6 +260,56 @@ function ensureBoundaryLayers(map: MapLibreMap, baseStyle: MapBaseStyle) {
   map.setPaintProperty(COUNTRY_LABEL_LAYER_ID, "text-halo-color", colors.halo);
 }
 
+function roundedPolygonPath(context: CanvasRenderingContext2D, points: Array<{ x: number; y: number }>, radius: number) {
+  points.forEach((point, index) => {
+    const previous = points[(index - 1 + points.length) % points.length];
+    const next = points[(index + 1) % points.length];
+    const previousVector = { x: previous.x - point.x, y: previous.y - point.y };
+    const nextVector = { x: next.x - point.x, y: next.y - point.y };
+    const previousLength = Math.hypot(previousVector.x, previousVector.y);
+    const nextLength = Math.hypot(nextVector.x, nextVector.y);
+    const cornerRadius = Math.min(radius, previousLength / 2, nextLength / 2);
+    const start = {
+      x: point.x + (previousVector.x / previousLength) * cornerRadius,
+      y: point.y + (previousVector.y / previousLength) * cornerRadius
+    };
+    const end = {
+      x: point.x + (nextVector.x / nextLength) * cornerRadius,
+      y: point.y + (nextVector.y / nextLength) * cornerRadius
+    };
+
+    if (index === 0) context.moveTo(start.x, start.y);
+    else context.lineTo(start.x, start.y);
+    context.quadraticCurveTo(point.x, point.y, end.x, end.y);
+  });
+  context.closePath();
+}
+
+function createModernTriangleImage() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return new ImageData(canvas.width, canvas.height);
+  }
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#ffffff";
+  context.beginPath();
+  roundedPolygonPath(context, [{ x: 32, y: 7 }, { x: 58, y: 56 }, { x: 6, y: 56 }], 8);
+  context.fill();
+  return context.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+function ensureModernTriangleImage(map: MapLibreMap) {
+  if (map.hasImage(MODERN_TRIANGLE_IMAGE_ID)) return;
+  map.addImage(MODERN_TRIANGLE_IMAGE_ID, createModernTriangleImage(), { sdf: true, pixelRatio: 2 });
+}
+
+function interactivePointLayers(map: MapLibreMap) {
+  return INTERACTIVE_POINT_LAYER_IDS.filter((layerId) => Boolean(map.getLayer(layerId)));
+}
+
 function ensureMapLayers(
   map: MapLibreMap,
   points: FeatureCollection<Point, MapPointProperties>,
@@ -311,12 +364,14 @@ function ensureMapLayers(
     });
   }
 
+  ensureModernTriangleImage(map);
+
   if (!map.getLayer(POINT_LAYER_ID)) {
     map.addLayer({
       id: POINT_LAYER_ID,
       type: "circle",
       source: POINT_SOURCE_ID,
-      filter: ["!=", ["get", "kind"], "centroid"],
+      filter: ["all", ["!=", ["get", "kind"], "centroid"], ["!=", ["get", "markerShape"], "triangle"]],
       paint: {
         "circle-color": ["coalesce", ["get", "markerColor"], "#2f6f4f"],
         "circle-radius": [
@@ -330,6 +385,35 @@ function ensureMapLayers(
         "circle-stroke-color": ["case", ["==", ["get", "isUnknownColor"], true], "#ffffff", "#ffffff"],
         "circle-stroke-width": ["case", ["==", ["get", "isUnknownColor"], true], 1.35, ["==", ["get", "kind"], "sample"], 0.5, 0.65],
         "circle-opacity": ["case", ["==", ["get", "kind"], "sample"], 0.86, 0.92]
+      }
+    });
+  }
+
+  if (!map.getLayer(MODERN_POINT_LAYER_ID)) {
+    map.addLayer({
+      id: MODERN_POINT_LAYER_ID,
+      type: "symbol",
+      source: POINT_SOURCE_ID,
+      filter: ["all", ["!=", ["get", "kind"], "centroid"], ["==", ["get", "markerShape"], "triangle"]],
+      layout: {
+        "icon-image": MODERN_TRIANGLE_IMAGE_ID,
+        "icon-size": [
+          "case",
+          ["==", ["get", "kind"], "aggregate"],
+          ["step", ["get", "sampleCount"], 0.86, 25, 1, 100, 1.16, 300, 1.32],
+          ["==", ["get", "kind"], "group"],
+          0.54,
+          0.46
+        ],
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
+        "icon-rotation-alignment": "viewport"
+      },
+      paint: {
+        "icon-color": ["coalesce", ["get", "markerColor"], "#2f6f4f"],
+        "icon-halo-color": "#ffffff",
+        "icon-halo-width": ["case", ["==", ["get", "isUnknownColor"], true], 1.15, ["==", ["get", "kind"], "sample"], 0.5, 0.65],
+        "icon-opacity": ["case", ["==", ["get", "kind"], "sample"], 0.9, 0.94]
       }
     });
   }
@@ -735,11 +819,12 @@ export function MapView({
       };
 
       const handleHover = (event: MapMouseEvent) => {
-        if (!map.getLayer(POINT_LAYER_ID)) {
+        const pointLayers = interactivePointLayers(map);
+        if (!pointLayers.length) {
           hidePopup();
           return;
         }
-        const features = map.queryRenderedFeatures(event.point, { layers: [POINT_LAYER_ID] }) as unknown as Array<Feature<Point, MapPointProperties>>;
+        const features = map.queryRenderedFeatures(event.point, { layers: pointLayers }) as unknown as Array<Feature<Point, MapPointProperties>>;
         const feature = features[0];
         if (!feature?.geometry || feature.geometry.type !== "Point") {
           hidePopup();
@@ -751,11 +836,12 @@ export function MapView({
       map.on("mousemove", handleHover);
       map.on("mouseleave", hidePopup);
       map.on("click", (event) => {
-        if (!map.getLayer(POINT_LAYER_ID)) {
+        const pointLayers = interactivePointLayers(map);
+        if (!pointLayers.length) {
           closePinnedPopup();
           return;
         }
-        const features = map.queryRenderedFeatures(event.point, { layers: [POINT_LAYER_ID] }) as unknown as Array<Feature<Point, MapPointProperties>>;
+        const features = map.queryRenderedFeatures(event.point, { layers: pointLayers }) as unknown as Array<Feature<Point, MapPointProperties>>;
         const feature = features[0];
         if (!feature?.geometry || feature.geometry.type !== "Point") {
           closePinnedPopup();

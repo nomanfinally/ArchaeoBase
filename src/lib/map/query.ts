@@ -1,8 +1,16 @@
 import type { Feature, FeatureCollection, LineString, Point } from "geojson";
 import { getLatestReleaseId, getPool } from "@/lib/db";
 import { compileGlobalSearch, compileSampleFilter, mergeWhere } from "@/lib/filters/compile";
-import type { MapBounds, SqlFragment } from "@/lib/filters/types";
+import type { MapBounds, SnpCopyState, SnpFilter, SqlFragment } from "@/lib/filters/types";
+import {
+  buildSnpColorJoin,
+  buildSnpFilterSql,
+  prepareSnpColor,
+  prepareSnpFilters,
+  type PreparedSnpColor
+} from "@/lib/genotypes/db";
 import { haplogroupDisplayValue, UNKNOWN_COLOR } from "./cache";
+import { DEFAULT_MAP_SNP_PALETTE, mapSnpPalettes, type MapSnpPalette } from "./types";
 import type {
   MapColorBy,
   MapColorMode,
@@ -28,6 +36,8 @@ type MapColorConfig = {
   fixedBy: MapColorBy;
   gradientBy: MapGradientBy;
   theme: MapColorTheme;
+  snpColor?: PreparedSnpColor | null;
+  snpPalette: MapSnpPalette;
 };
 
 type CacheRow = {
@@ -106,6 +116,10 @@ type CacheRow = {
   group_is_spatial_outlier: boolean | null;
   group_outlier_target_latitude: number | null;
   group_outlier_target_longitude: number | null;
+  snp_color_call_code?: number | null;
+  snp_color_ref_count?: number | null;
+  snp_color_alt_count?: number | null;
+  snp_color_is_missing?: boolean | null;
 };
 
 type GroupedRows = {
@@ -134,6 +148,7 @@ type LegendCacheRow = {
 };
 
 const UNMAPPED_PREVIEW_LIMIT = 50;
+const SNP_COLOR_MISSING = "#111111";
 
 const fixedColumnMap: Record<MapColorBy, { label: keyof CacheRow; light: keyof CacheRow; dark: keyof CacheRow; title: string }> = {
   single: { label: "single_label", light: "single_color_light", dark: "single_color_dark", title: "Single color" },
@@ -233,6 +248,38 @@ function formatGradientValue(value: number | null, field: MapGradientBy) {
   return formatInteger(value);
 }
 
+function snpSelectedAlleleCount(row: CacheRow, config: MapColorConfig) {
+  if (!config.snpColor) return null;
+  if (row.snp_color_is_missing || row.snp_color_call_code === 3) return null;
+  const count = config.snpColor.alleleRole === "ref" ? row.snp_color_ref_count : row.snp_color_alt_count;
+  return typeof count === "number" && Number.isFinite(count) ? count : null;
+}
+
+function snpPaletteColors(config: MapColorConfig) {
+  return (mapSnpPalettes.find((palette) => palette.id === config.snpPalette) ?? mapSnpPalettes[0]).colors;
+}
+
+function snpColorForSelectedCount(count: number, config: MapColorConfig) {
+  const colors = snpPaletteColors(config);
+  if (count === 2) return colors.two;
+  if (count === 1) return colors.one;
+  return colors.zero;
+}
+
+function snpGenotypeLabelForCallCode(callCode: number | null | undefined, config: MapColorConfig, withSnpId = true) {
+  const variant = config.snpColor;
+  if (!variant || callCode === null || callCode === undefined || callCode === 3) return "missing";
+  const ref = variant.ref_allele ?? "?";
+  const alt = variant.alt_allele ?? "?";
+  const selected = variant.alleleRole === "ref" ? ref : alt;
+  const other = variant.alleleRole === "ref" ? alt : ref;
+  const selectedCount = variant.alleleRole === "ref"
+    ? callCode === 2 ? 2 : callCode === 1 ? 1 : 0
+    : callCode === 0 ? 2 : callCode === 1 ? 1 : 0;
+  const genotype = selectedCount === 2 ? `${selected}${selected}` : selectedCount === 1 ? `${selected}${other}` : `${other}${other}`;
+  return withSnpId ? `${variant.snp_id} ${genotype}` : genotype;
+}
+
 function hexToRgb(hex: string) {
   const normalized = hex.replace("#", "");
   return {
@@ -271,6 +318,15 @@ function colorFromGradientLegend(value: number, legend: Extract<MapLegend, { kin
 }
 
 function colorInfoForSample(row: CacheRow, config: MapColorConfig) {
+  if (config.mode === "snp") {
+    const selectedCount = snpSelectedAlleleCount(row, config);
+    if (selectedCount === null) {
+      return { label: "missing", color: SNP_COLOR_MISSING, isUnknown: true };
+    }
+    const label = snpGenotypeLabelForCallCode(row.snp_color_call_code, config);
+    return { label, color: snpColorForSelectedCount(selectedCount, config), isUnknown: false };
+  }
+
   if (config.mode === "fixed") {
     const columns = fixedColumnMap[config.fixedBy];
     const label = String(row[columns.label] ?? "Unknown");
@@ -286,6 +342,12 @@ function colorInfoForSample(row: CacheRow, config: MapColorConfig) {
 }
 
 function colorInfoForGroup(rows: CacheRow[], config: MapColorConfig, legend: MapLegend) {
+  if (config.mode === "snp") {
+    const labels = Array.from(new Set(rows.map((row) => colorInfoForSample(row, config).label)));
+    if (labels.length > 1) return { label: "Mixed genotype", color: "#6b7280", isUnknown: false };
+    return colorInfoForSample(rows[0], config);
+  }
+
   if (config.mode === "fixed") {
     const columns = fixedColumnMap[config.fixedBy];
     const labels = Array.from(new Set(rows.map((row) => String(row[columns.label] ?? "Unknown"))));
@@ -307,13 +369,14 @@ function colorInfoForGroup(rows: CacheRow[], config: MapColorConfig, legend: Map
   };
 }
 
-function sampleDetail(row: CacheRow) {
+function sampleDetail(row: CacheRow, colorConfig: MapColorConfig) {
   const geneticId = asText(row.genetic_id);
   const group = asText(row.group_id);
   const title = geneticId || group || "Sample";
   const place = [asText(row.locality), asText(row.political_entity)].filter(Boolean).join(", ");
   const yDna = haplogroupDisplayValue(row.y_hap_isogg, "y", row.molecular_sex);
   const mtDna = haplogroupDisplayValue(row.mtdna_haplogroup, "mtdna", row.molecular_sex);
+  const snpRow = sampleSnpPopupRow(row, colorConfig);
   return {
     title,
     subtitle: place,
@@ -326,12 +389,13 @@ function sampleDetail(row: CacheRow) {
       ["Y-DNA", yDna],
       ["mtDNA", mtDna],
       ["SNPs 1240k", row.snp_1240k],
-      ["SNPs 2M", row.snp_2m]
+      ["SNPs 2M", row.snp_2m],
+      ...(snpRow ? [snpRow] : [])
     ])
   };
 }
 
-function groupDetail(groupId: string, rows: CacheRow[]) {
+function groupDetail(groupId: string, rows: CacheRow[], colorConfig: MapColorConfig) {
   const localities = Array.from(new Set(rows.map((row) => asText(row.locality)).filter(Boolean))).sort();
   const countries = Array.from(new Set(rows.map((row) => asText(row.political_entity)).filter(Boolean))).sort();
   const periods = Array.from(new Set(rows.map((row) => asText(row.period_label)).filter(Boolean))).sort();
@@ -341,6 +405,7 @@ function groupDetail(groupId: string, rows: CacheRow[]) {
   const snps = rows.map((row) => asNumber(row.snp_1240k)).filter((value): value is number => value !== null);
   const avgSnps = snps.length ? Math.round(snps.reduce((total, value) => total + value, 0) / snps.length) : null;
   const dateText = years.length ? `${formatYear(Math.min(...years))} to ${formatYear(Math.max(...years))}` : "";
+  const snpRow = groupSnpPopupRow(rows, colorConfig);
   return {
     title: groupId || "Group",
     subtitle: countries.join(", ") || truncateText(localities.join("; ")),
@@ -352,9 +417,21 @@ function groupDetail(groupId: string, rows: CacheRow[]) {
       ["Localities", truncateText(localities.join("; "))],
       ["Y-DNA", truncateText(yDna.join(", "))],
       ["mtDNA", truncateText(mtDna.join(", "))],
-      ["Avg SNPs 1240k", avgSnps]
+      ["Avg SNPs 1240k", avgSnps],
+      ...(snpRow ? [snpRow] : [])
     ])
   };
+}
+
+function sampleSnpPopupRow(row: CacheRow, config: MapColorConfig): [string, string | null] | null {
+  if (config.mode !== "snp" || !config.snpColor) return null;
+  return [config.snpColor.snp_id, snpGenotypeLabelForCallCode(row.snp_color_call_code, config, false)];
+}
+
+function groupSnpPopupRow(rows: CacheRow[], config: MapColorConfig): [string, string | null] | null {
+  if (config.mode !== "snp" || !config.snpColor) return null;
+  const labels = Array.from(new Set(rows.map((row) => snpGenotypeLabelForCallCode(row.snp_color_call_code, config, false)))).sort();
+  return [config.snpColor.snp_id, truncateText(labels.join(", "))];
 }
 
 function pointFeature(
@@ -430,7 +507,7 @@ export function buildSampleFeatures(rows: CacheRow[], colorConfig: MapColorConfi
   for (const row of rows) {
     if (row.display_latitude === null || row.display_longitude === null || row.original_latitude === null || row.original_longitude === null) continue;
     const colorInfo = colorInfoForSample(row, colorConfig);
-    const detail = sampleDetail(row);
+    const detail = sampleDetail(row, colorConfig);
     features.push(
       pointFeature(`sample:${row.sample_id}`, "sample", row.display_latitude, row.display_longitude, row.original_latitude, row.original_longitude, {
         label: "",
@@ -490,7 +567,7 @@ export function buildGroupFeatures(rows: CacheRow[], colorConfig: MapColorConfig
     const first = group.rows[0];
     const groupId = first.group_id || `No group ID:${first.genetic_id ?? first.sample_id}`;
     const colorInfo = colorInfoForGroup(group.rows, colorConfig, legend);
-    const detail = groupDetail(groupId, group.rows);
+    const detail = groupDetail(groupId, group.rows, colorConfig);
     const markerId = `group:${group.key}`;
     features.push(
       pointFeature(markerId, "group", group.displayLatitude, group.displayLongitude, group.centroidLatitude, group.centroidLongitude, {
@@ -597,6 +674,15 @@ function parseJsonArray<T>(value: unknown): T[] {
 }
 
 function emptyLegend(config: MapColorConfig): MapLegend {
+  if (config.mode === "snp") {
+    return {
+      kind: "categorical",
+      title: "SNP genotype",
+      items: [],
+      totalItems: 0
+    };
+  }
+
   if (config.mode === "gradient") {
     return {
       kind: "gradient",
@@ -617,6 +703,8 @@ function emptyLegend(config: MapColorConfig): MapLegend {
 }
 
 async function loadLegend(releaseId: string, config: MapColorConfig): Promise<MapLegend> {
+  if (config.mode === "snp") return emptyLegend(config);
+
   const pool = getPool();
   const field = config.mode === "fixed" ? config.fixedBy : config.gradientBy;
   const result = await pool.query<LegendCacheRow>(
@@ -657,6 +745,37 @@ async function loadLegend(releaseId: string, config: MapColorConfig): Promise<Ma
 }
 
 function filteredLegend(cachedLegend: MapLegend, rows: CacheRow[], config: MapColorConfig): MapLegend {
+  if (config.mode === "snp") {
+    const counts = new Map<string, { color: string; count: number; sort: number }>();
+    const sortedLabels = config.snpColor
+      ? [0, 1, 2].map((callCode) => snpGenotypeLabelForCallCode(callCode, config))
+      : [];
+    const sortOrder = new Map([
+      [sortedLabels[0], 0],
+      [sortedLabels[1], 1],
+      [sortedLabels[2], 2],
+      ["missing", 3]
+    ]);
+    for (const row of rows) {
+      const info = colorInfoForSample(row, config);
+      const current = counts.get(info.label);
+      if (current) {
+        current.count += 1;
+      } else {
+        counts.set(info.label, { color: info.color, count: 1, sort: sortOrder.get(info.label) ?? 99 });
+      }
+    }
+    const items = Array.from(counts.entries())
+      .sort((a, b) => a[1].sort - b[1].sort || a[0].localeCompare(b[0]))
+      .map(([label, item]) => ({ label, color: item.color, count: item.count }));
+    return {
+      kind: "categorical",
+      title: "SNP genotype",
+      items,
+      totalItems: items.length
+    };
+  }
+
   if (config.mode === "gradient") {
     if (cachedLegend.kind !== "gradient") return emptyLegend(config);
     const valueColumn = gradientColumnMap[config.gradientBy].value;
@@ -721,6 +840,25 @@ function filteredLegend(cachedLegend: MapLegend, rows: CacheRow[], config: MapCo
     items,
     totalItems: items.length
   };
+}
+
+function appendSnpWhere(whereText: string, snpWhereText: string) {
+  return snpWhereText === "TRUE" ? whereText : `${whereText} AND ${snpWhereText}`;
+}
+
+function mapSnpFiltersForRequest(request: MapQueryRequest): SnpFilter[] {
+  const filters = request.snpFilters ?? [];
+  if (request.colorMode !== "snp" || !request.includeSnpZeroCopies) return filters;
+  const target = request.snpColor ?? filters[0];
+  if (!target) return filters;
+  let matched = false;
+  const expanded = filters.map((filter) => {
+    if (filter.snpId !== target.snpId || filter.alleleRole !== target.alleleRole) return filter;
+    matched = true;
+    const copyStates: SnpCopyState[] = filter.copyStates.includes(0) ? filter.copyStates : [0, ...filter.copyStates];
+    return { ...filter, copyStates };
+  });
+  return matched ? expanded : [...expanded, { snpId: target.snpId, alleleRole: target.alleleRole, copyStates: [0, 1, 2] }];
 }
 
 const cacheSelect = `
@@ -805,11 +943,16 @@ export async function runMapQuery(request: MapQueryRequest): Promise<MapQueryRes
   const pool = getPool();
   const release = await getLatestReleaseId();
   const presentation: MapPresentation = request.presentation === "group_locations" ? "group_locations" : "sample_cloud";
+  const snpFilters = await prepareSnpFilters(pool, release.id, mapSnpFiltersForRequest(request));
+  const requestedColorMode = request.colorMode ?? "fixed";
+  const snpColor = requestedColorMode === "snp" ? await prepareSnpColor(pool, release.id, request.snpColor, snpFilters) : null;
   const colorConfig: MapColorConfig = {
-    mode: request.colorMode ?? "fixed",
+    mode: requestedColorMode === "snp" && !snpColor ? "fixed" : requestedColorMode,
     fixedBy: request.colorBy ?? "sex",
     gradientBy: request.gradientBy ?? "snp_1240k",
-    theme: request.colorTheme ?? "light"
+    theme: request.colorTheme ?? "light",
+    snpColor,
+    snpPalette: request.snpPalette ?? DEFAULT_MAP_SNP_PALETTE
   };
   const showGroupCounts = request.showGroupCounts !== false;
 
@@ -817,10 +960,35 @@ export async function runMapQuery(request: MapQueryRequest): Promise<MapQueryRes
   const missingWhere = buildMapSampleWhere(request, release.id, { missingCoordinates: true });
   const issueWhere = buildMapSampleWhere(request, release.id, { coordinateIssues: true });
   const mappedWhere = buildMapSampleWhere(request, release.id, { requireCoordinates: true });
+  const allSnpSql = buildSnpFilterSql(snpFilters, allWhere.params.length);
+  const missingSnpSql = buildSnpFilterSql(snpFilters, missingWhere.params.length);
+  const issueSnpSql = buildSnpFilterSql(snpFilters, issueWhere.params.length);
+  const mappedSnpSql = buildSnpFilterSql(snpFilters, mappedWhere.params.length);
+  const allWhereText = appendSnpWhere(allWhere.text, allSnpSql.whereText);
+  const missingWhereText = appendSnpWhere(missingWhere.text, missingSnpSql.whereText);
+  const issueWhereText = appendSnpWhere(issueWhere.text, issueSnpSql.whereText);
+  const mappedWhereText = appendSnpWhere(mappedWhere.text, mappedSnpSql.whereText);
+  const allParams = [...allWhere.params, ...allSnpSql.params];
+  const missingParams = [...missingWhere.params, ...missingSnpSql.params];
+  const issueParams = [...issueWhere.params, ...issueSnpSql.params];
+  const mappedColorJoin = buildSnpColorJoin(snpColor, mappedWhere.params.length + mappedSnpSql.params.length);
+  const mappedParams = [...mappedWhere.params, ...mappedSnpSql.params, ...mappedColorJoin.params];
+  const snpColorSelect = mappedColorJoin.alias
+    ? `,
+  ${mappedColorJoin.alias}.call_code AS snp_color_call_code,
+  ${mappedColorJoin.alias}.ref_count AS snp_color_ref_count,
+  ${mappedColorJoin.alias}.alt_count AS snp_color_alt_count,
+  ${mappedColorJoin.alias}.is_missing AS snp_color_is_missing`
+    : "";
 
   const totalRows = await pool.query(
-    `SELECT count(*)::integer AS total_matched FROM samples s WHERE ${allWhere.text}`,
-    allWhere.params
+    `
+      SELECT count(*)::integer AS total_matched
+      FROM samples s
+      ${allSnpSql.joins}
+      WHERE ${allWhereText}
+    `,
+    allParams
   );
   const cacheRows = await pool.query(
     "SELECT count(*)::integer AS cached_samples FROM sample_map_cache WHERE release_id = $1",
@@ -840,47 +1008,52 @@ export async function runMapQuery(request: MapQueryRequest): Promise<MapQueryRes
         count(*) FILTER (WHERE sc.coordinate_status = 'missing')::integer AS unmapped_samples,
         count(*) FILTER (WHERE sc.coordinate_status = 'issue')::integer AS coordinate_issues
       FROM samples s
+      ${allSnpSql.joins}
       LEFT JOIN sample_map_cache sc ON sc.sample_id = s.id
-      WHERE ${allWhere.text}
+      WHERE ${allWhereText}
     `,
-    allWhere.params
+    allParams
   );
 
   const missingRows = await pool.query(
     `
       SELECT sc.genetic_id, sc.group_id, sc.locality, sc.political_entity
       FROM samples s
+      ${missingSnpSql.joins}
       JOIN sample_map_cache sc ON sc.sample_id = s.id
-      WHERE ${missingWhere.text}
+      WHERE ${missingWhereText}
       ORDER BY sc.genetic_id ASC NULLS LAST, sc.sample_id ASC
-      LIMIT $${missingWhere.params.length + 1}
+      LIMIT $${missingParams.length + 1}
     `,
-    [...missingWhere.params, UNMAPPED_PREVIEW_LIMIT]
+    [...missingParams, UNMAPPED_PREVIEW_LIMIT]
   );
 
   const issueRows = await pool.query<CacheRow>(
     `
       SELECT ${cacheSelect}
       FROM samples s
+      ${issueSnpSql.joins}
       JOIN sample_map_cache sc ON sc.sample_id = s.id
       LEFT JOIN group_map_cache gc ON gc.release_id = sc.release_id AND gc.group_site_key = sc.group_site_key
-      WHERE ${issueWhere.text}
+      WHERE ${issueWhereText}
       ORDER BY sc.genetic_id ASC NULLS LAST, sc.sample_id ASC
-      LIMIT $${issueWhere.params.length + 1}
+      LIMIT $${issueParams.length + 1}
     `,
-    [...issueWhere.params, UNMAPPED_PREVIEW_LIMIT]
+    [...issueParams, UNMAPPED_PREVIEW_LIMIT]
   );
 
   const mappedRows = await pool.query<CacheRow>(
     `
-      SELECT ${cacheSelect}
+      SELECT ${cacheSelect}${snpColorSelect}
       FROM samples s
+      ${mappedSnpSql.joins}
+      ${mappedColorJoin.join}
       JOIN sample_map_cache sc ON sc.sample_id = s.id
       LEFT JOIN group_map_cache gc ON gc.release_id = sc.release_id AND gc.group_site_key = sc.group_site_key
-      WHERE ${mappedWhere.text}
+      WHERE ${mappedWhereText}
       ORDER BY sc.group_id ASC NULLS LAST, sc.genetic_id ASC NULLS LAST, sc.sample_id ASC
     `,
-    mappedWhere.params
+    mappedParams
   );
 
   const cachedLegend = await loadLegend(release.id, colorConfig);

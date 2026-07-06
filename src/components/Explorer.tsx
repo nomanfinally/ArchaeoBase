@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SortingState } from "@tanstack/react-table";
-import { AlertCircle, ArrowUpDown, Columns3, Copy, Download, Edit3, Filter, GripVertical, Map as MapIcon, Plus, RefreshCw, Search, Settings2, Table2, Trash2, Upload, X } from "lucide-react";
+import { AlertCircle, ArrowUpDown, Columns3, Copy, Database, Download, Edit3, Filter, GripVertical, Loader2, Map as MapIcon, Plus, RefreshCw, Search, Settings2, Table2, Trash2, Upload, X } from "lucide-react";
 import { aggregateUniqueGroupRows, UNIQUE_GROUP_EXPORT_COLUMNS } from "@/lib/export/group-aggregation";
-import type { FilterNode, SortSpec } from "@/lib/filters/types";
-import type { MapQueryResponse } from "@/lib/map/types";
+import type { FilterNode, SnpAlleleRole, SnpColorSpec, SnpCopyState, SnpFilter, SortSpec } from "@/lib/filters/types";
+import { DEFAULT_MAP_SNP_PALETTE, mapSnpPalettes, type MapQueryResponse, type MapSnpPalette } from "@/lib/map/types";
 import {
   PROFILE_FILE_EXTENSION,
   parseProfileText,
@@ -65,6 +65,25 @@ type AdmixtureRun = {
   components: { componentIndex: number; colorHex: string; label: string | null }[];
 };
 
+type GenotypeVariant = {
+  id: string;
+  snp_id: string;
+  chromosome: string;
+  physical_position: string | number | null;
+  ref_allele: string | null;
+  alt_allele: string | null;
+  cached?: boolean;
+  cached_count?: number;
+  sample_count?: number;
+};
+
+type SnpCacheStatus = {
+  phase: "caching" | "clearing" | "done" | "error";
+  snpId?: string;
+  message: string;
+  detail?: string;
+};
+
 type MapReviewData = Pick<MapQueryResponse, "unmappedSamples" | "coordinateIssues">;
 
 const emptyFilter: FilterNode = {
@@ -112,9 +131,13 @@ function sortSpecsToSorting(sort: SortSpec[] | undefined): SortingState {
   return (sort ?? []).slice(0, MAX_SORT_RULES).map((entry) => ({ id: entry.field, desc: entry.direction === "desc" }));
 }
 
+function isDynamicSnpColumnId(id: string) {
+  return /^snp_\d+$/.test(id);
+}
+
 function sanitizeColumnIds(ids: string[] | undefined, fields: FieldDefinition[], fallback: string[]) {
   const known = new Set(fields.map((field) => field.id));
-  const next = (ids ?? []).filter((id, index, list) => known.has(id) && list.indexOf(id) === index);
+  const next = (ids ?? []).filter((id, index, list) => (known.has(id) || isDynamicSnpColumnId(id)) && list.indexOf(id) === index);
   return next.length ? next : fallback;
 }
 
@@ -122,7 +145,7 @@ function sanitizeColumnWidths(widths: Record<string, number> | undefined, fields
   const known = new Set(fields.map((field) => field.id).concat("admixture"));
   return Object.fromEntries(
     Object.entries(widths ?? {})
-      .filter(([fieldId, width]) => known.has(fieldId) && Number.isFinite(width))
+      .filter(([fieldId, width]) => (known.has(fieldId) || isDynamicSnpColumnId(fieldId)) && Number.isFinite(width))
       .map(([fieldId, width]) => [fieldId, Math.min(520, Math.max(92, Math.round(width)))])
   );
 }
@@ -154,6 +177,44 @@ function csvValue(value: unknown) {
 function countConditions(node: FilterNode): number {
   if (node.type === "condition") return 1;
   return node.children.reduce((total, child) => total + countConditions(child), 0);
+}
+
+const snpCopyStateLabels: Array<{ value: SnpCopyState; label: string }> = [
+  { value: 0, label: "0 copies" },
+  { value: 1, label: "1 copy" },
+  { value: 2, label: "2 copies" },
+  { value: "missing", label: "missing" }
+];
+
+function formatSnpCopyStates(states: SnpCopyState[]) {
+  return states
+    .map((state) => snpCopyStateLabels.find((candidate) => candidate.value === state)?.label ?? String(state))
+    .join(", ");
+}
+
+function genotypeVariantPosition(variant: GenotypeVariant) {
+  return variant.physical_position ? `chr${variant.chromosome}:${variant.physical_position}` : `chr${variant.chromosome}`;
+}
+
+function genotypeVariantAlleles(variant: GenotypeVariant) {
+  return `${variant.ref_allele ?? "?"}/${variant.alt_allele ?? "?"}`;
+}
+
+function genotypeVariantCacheLabel(variant: GenotypeVariant) {
+  const cachedCount = Number(variant.cached_count ?? 0);
+  const sampleCount = Number(variant.sample_count ?? 0);
+  if (variant.cached && sampleCount > 0) return `cached ${formatCount(sampleCount)}`;
+  if (cachedCount > 0 && sampleCount > 0) return `${formatCount(cachedCount)} / ${formatCount(sampleCount)}`;
+  return "not cached";
+}
+
+function snpAlleleLabel(variant: GenotypeVariant | null, role: SnpAlleleRole) {
+  if (!variant) return role === "ref" ? "Ref" : "Alt";
+  return role === "ref" ? `Ref ${variant.ref_allele ?? "?"}` : `Alt ${variant.alt_allele ?? "?"}`;
+}
+
+function normalizeMapSnpPalette(value: unknown): MapSnpPalette {
+  return mapSnpPalettes.some((palette) => palette.id === value) ? value as MapSnpPalette : DEFAULT_MAP_SNP_PALETTE;
 }
 
 function combineWithTimeWindow(filter: FilterNode, timeWindow: TimeWindowValue): FilterNode {
@@ -210,12 +271,23 @@ export function Explorer() {
   const [pageSize, setPageSize] = useState(100);
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
+  const [snpColumns, setSnpColumns] = useState<FieldDefinition[]>([]);
   const [releaseName, setReleaseName] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [csvExporting, setCsvExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runs, setRuns] = useState<AdmixtureRun[]>([]);
   const [admixtureRunId, setAdmixtureRunId] = useState<number | null>(null);
+  const [snpSearch, setSnpSearch] = useState("");
+  const [snpResults, setSnpResults] = useState<GenotypeVariant[]>([]);
+  const [selectedSnp, setSelectedSnp] = useState<GenotypeVariant | null>(null);
+  const [snpAlleleRole, setSnpAlleleRole] = useState<SnpAlleleRole>("alt");
+  const [snpCopyStates, setSnpCopyStates] = useState<SnpCopyState[]>([1, 2]);
+  const [snpFilters, setSnpFilters] = useState<SnpFilter[]>([]);
+  const [snpColor, setSnpColor] = useState<SnpColorSpec | null>(null);
+  const [snpSearchLoading, setSnpSearchLoading] = useState(false);
+  const [snpSearchError, setSnpSearchError] = useState<string | null>(null);
+  const [snpCacheStatus, setSnpCacheStatus] = useState<SnpCacheStatus | null>(null);
   const [timeWindow, setTimeWindow] = useState<TimeWindowValue>(fullTimeWindow);
   const [timeMode, setTimeMode] = useState<TimeMode>("calendar");
   const [periodOptions, setPeriodOptions] = useState<PeriodOption[]>(defaultPeriodOptions);
@@ -230,6 +302,8 @@ export function Explorer() {
   const [mapShowCentroids, setMapShowCentroids] = useState(true);
   const [mapShowLegend, setMapShowLegend] = useState(true);
   const [mapFadeLegend, setMapFadeLegend] = useState(true);
+  const [mapSnpPalette, setMapSnpPalette] = useState<MapSnpPalette>(DEFAULT_MAP_SNP_PALETTE);
+  const [mapSnpIncludeUnmutated, setMapSnpIncludeUnmutated] = useState(false);
   const [mapFullView, setMapFullView] = useState(false);
   const [mapProjectionMode, setMapProjectionMode] = useState<MapProjectionMode>("flat");
   const [mapTotal, setMapTotal] = useState(0);
@@ -253,7 +327,7 @@ export function Explorer() {
   const [exportDropTarget, setExportDropTarget] = useState<{ id: ExportColumnId; position: "before" | "after" } | null>(null);
   const profileImportRef = useRef<HTMLInputElement | null>(null);
   const panelResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
-  const tableQueryCacheRef = useRef(new Map<string, { rows: Record<string, unknown>[]; total: number; releaseName: string | null }>());
+  const tableQueryCacheRef = useRef(new Map<string, { rows: Record<string, unknown>[]; total: number; releaseName: string | null; snpColumns: FieldDefinition[] }>());
 
   useEffect(() => {
     async function loadSchema() {
@@ -309,6 +383,8 @@ export function Explorer() {
       timeMode,
       periods: periodOptions,
       admixtureRunId,
+      snpFilters,
+      snpColor,
       pageSize,
       map: {
         baseStyle: mapBaseStyle,
@@ -321,7 +397,9 @@ export function Explorer() {
         showCentroids: mapShowCentroids,
         showLegend: mapShowLegend,
         fadeLegend: mapFadeLegend,
-        projectionMode: mapProjectionMode
+        projectionMode: mapProjectionMode,
+        snpPalette: mapSnpPalette,
+        includeSnpZeroCopies: mapSnpIncludeUnmutated
       },
       panel: {
         rightWidth: panelWidth,
@@ -351,6 +429,8 @@ export function Explorer() {
     setTimeMode(view.timeMode === "bp" ? "bp" : "calendar");
     if (view.periods?.length) setPeriodOptions(view.periods);
     setAdmixtureRunId(view.admixtureRunId ?? null);
+    setSnpFilters(view.snpFilters ?? []);
+    setSnpColor(view.snpColor ?? null);
     setPageSize(view.pageSize && view.pageSize > 0 ? view.pageSize : 100);
     setMapBaseStyle((view.map?.baseStyle as MapBaseStyle) ?? "light");
     setMapColorMode((view.map?.colorMode as MapColorMode) ?? "fixed");
@@ -362,6 +442,8 @@ export function Explorer() {
     setMapShowCentroids(view.map?.showCentroids !== false);
     setMapShowLegend(view.map?.showLegend !== false);
     setMapFadeLegend(view.map?.fadeLegend !== false);
+    setMapSnpPalette(normalizeMapSnpPalette(view.map?.snpPalette));
+    setMapSnpIncludeUnmutated(Boolean(view.map?.includeSnpZeroCopies));
     setMapProjectionMode((view.map?.projectionMode as MapProjectionMode) ?? "flat");
     setPanelWidth(clampPanelWidth(view.panel?.rightWidth ?? DEFAULT_PANEL_WIDTH));
     setTimePanelOpen(Boolean(view.panel?.timeOpen));
@@ -423,6 +505,8 @@ export function Explorer() {
     timeMode,
     periodOptions,
     admixtureRunId,
+    snpFilters,
+    snpColor,
     pageSize,
     mapBaseStyle,
     mapColorMode,
@@ -434,6 +518,8 @@ export function Explorer() {
     mapShowCentroids,
     mapShowLegend,
     mapFadeLegend,
+    mapSnpPalette,
+    mapSnpIncludeUnmutated,
     mapProjectionMode,
     panelWidth,
     timePanelOpen
@@ -443,26 +529,53 @@ export function Explorer() {
     if (!schema) return [];
     return entity === "sample" ? schema.sampleFields : schema.groupFields;
   }, [schema, entity]);
-  const activeFields = useMemo(
-    () => orderFieldsByColumnIds(allFields, visibleColumns[entity] ?? []),
-    [allFields, visibleColumns, entity]
+  const activeSnpColumns = useMemo(
+    () => snpColumns.filter((field, index, list) => list.findIndex((candidate) => candidate.id === field.id) === index),
+    [snpColumns]
   );
-  const fieldById = useMemo(() => new Map(allFields.map((field) => [field.id, field])), [allFields]);
+  const allTableFields = useMemo(() => {
+    const seen = new Set<string>();
+    return [...allFields, ...activeSnpColumns].filter((field) => {
+      if (seen.has(field.id)) return false;
+      seen.add(field.id);
+      return true;
+    });
+  }, [allFields, activeSnpColumns]);
+
+  useEffect(() => {
+    if (!activeSnpColumns.length) return;
+    setVisibleColumns((current) => {
+      const active = current[entity] ?? [];
+      const missing = activeSnpColumns.map((field) => field.id).filter((fieldId) => !active.includes(fieldId));
+      if (!missing.length) return current;
+      return { ...current, [entity]: [...active, ...missing] };
+    });
+  }, [activeSnpColumns, entity]);
+
+  const activeFields = useMemo(
+    () => orderFieldsByColumnIds(allTableFields, visibleColumns[entity] ?? []),
+    [allTableFields, visibleColumns, entity]
+  );
+  const tableFields = allTableFields;
+  const tableVisibleColumns = visibleColumns[entity] ?? [];
+  const fieldById = useMemo(() => new Map(allTableFields.map((field) => [field.id, field])), [allTableFields]);
   const exportableColumnLabels = useMemo(() => {
     const labels = new Map<ExportColumnId, string>();
     if (exportMode === "unique_groups") {
       UNIQUE_GROUP_EXPORT_COLUMNS.forEach((column) => labels.set(column.id, column.label));
       return labels;
     }
-    allFields.forEach((field) => labels.set(field.id, field.label));
+    allTableFields.forEach((field) => labels.set(field.id, field.label));
     if (admixtureRunId !== null) labels.set("admixture", "ADMIXTURE");
     return labels;
-  }, [allFields, admixtureRunId, exportMode]);
+  }, [allTableFields, admixtureRunId, exportMode]);
 
   const displayedRows = useMemo(() => normalizeRows(rows, entity), [rows, entity]);
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const appliedFilterCount = countConditions(filter);
+  const totalFilterCount = appliedFilterCount + snpFilters.length;
   const debouncedSearch = useDebouncedValue(globalSearch, 180);
+  const debouncedSnpSearch = useDebouncedValue(snpSearch, 180);
   const debouncedTimeWindow = useDebouncedValue(timeWindow, viewMode === "map" ? 260 : 80);
   const queryFilter = useMemo(() => combineWithTimeWindow(filter, debouncedTimeWindow), [filter, debouncedTimeWindow]);
 
@@ -475,6 +588,41 @@ export function Explorer() {
     const allowed = mapGradientOptions.some((option) => option.id === mapGradientBy);
     if (!allowed) setMapGradientBy("snp_1240k");
   }, [mapGradientBy]);
+
+  useEffect(() => {
+    if (mapColorMode === "snp" && !snpColor && !snpFilters.length) setMapColorMode("fixed");
+  }, [mapColorMode, snpColor, snpFilters.length]);
+
+  useEffect(() => {
+    const query = debouncedSnpSearch.trim();
+    if (!query) {
+      setSnpResults([]);
+      setSnpSearchError(null);
+      setSnpSearchLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    async function searchVariants() {
+      setSnpSearchLoading(true);
+      setSnpSearchError(null);
+      try {
+        const response = await fetch(`/api/genotypes/variants?q=${encodeURIComponent(query)}&limit=12`, { signal: controller.signal });
+        const data = (await response.json()) as { variants?: GenotypeVariant[]; error?: string };
+        if (!response.ok) throw new Error(data.error ?? "SNP search failed");
+        setSnpResults(data.variants ?? []);
+      } catch (searchError) {
+        if (searchError instanceof DOMException && searchError.name === "AbortError") return;
+        setSnpResults([]);
+        setSnpSearchError(searchError instanceof Error ? searchError.message : "SNP search failed");
+      } finally {
+        setSnpSearchLoading(false);
+      }
+    }
+
+    void searchVariants();
+    return () => controller.abort();
+  }, [debouncedSnpSearch]);
 
   useEffect(() => {
     if (!schema || viewMode === "map") return;
@@ -490,6 +638,8 @@ export function Explorer() {
       page,
       pageSize,
       admixtureRunId,
+      snpFilters,
+      snpColor,
       mapBounds: null
     };
     const tableCacheKey = JSON.stringify(requestBody);
@@ -498,6 +648,7 @@ export function Explorer() {
       setRows(cachedTableQuery.rows);
       setTotal(cachedTableQuery.total);
       setReleaseName(cachedTableQuery.releaseName);
+      setSnpColumns(cachedTableQuery.snpColumns);
       setLoading(false);
       setError(null);
       return;
@@ -521,10 +672,12 @@ export function Explorer() {
         const nextRows = data.rows ?? [];
         const nextTotal = data.total ?? 0;
         const nextReleaseName = data.release?.name ?? null;
+        const nextSnpColumns = (data.snpColumns ?? []) as FieldDefinition[];
         setRows(nextRows);
         setTotal(nextTotal);
         setReleaseName(nextReleaseName);
-        tableQueryCacheRef.current.set(tableCacheKey, { rows: nextRows, total: nextTotal, releaseName: nextReleaseName });
+        setSnpColumns(nextSnpColumns);
+        tableQueryCacheRef.current.set(tableCacheKey, { rows: nextRows, total: nextTotal, releaseName: nextReleaseName, snpColumns: nextSnpColumns });
         if (tableQueryCacheRef.current.size > 20) {
           const oldestKey = tableQueryCacheRef.current.keys().next().value;
           if (oldestKey) tableQueryCacheRef.current.delete(oldestKey);
@@ -533,6 +686,7 @@ export function Explorer() {
         if (queryError instanceof DOMException && queryError.name === "AbortError") return;
         setRows([]);
         setTotal(0);
+        setSnpColumns([]);
         setError(queryError instanceof Error ? queryError.message : "Query failed");
       } finally {
         setLoading(false);
@@ -541,7 +695,7 @@ export function Explorer() {
 
     void run();
     return () => controller.abort();
-  }, [schema, entity, viewMode, queryFilter, debouncedSearch, searchField, sorting, page, pageSize, admixtureRunId]);
+  }, [schema, entity, viewMode, queryFilter, debouncedSearch, searchField, sorting, page, pageSize, admixtureRunId, snpFilters, snpColor]);
 
   function toggleColumn(fieldId: string) {
     setVisibleColumns((current) => {
@@ -572,7 +726,7 @@ export function Explorer() {
   }
 
   function rowExportColumnOrder() {
-    const knownFieldIds = allFields.map((field) => field.id);
+    const knownFieldIds = allTableFields.map((field) => field.id);
     const visible = (visibleColumns[entity] ?? []).filter((fieldId) => fieldById.has(fieldId));
     const hidden = knownFieldIds.filter((fieldId) => !visible.includes(fieldId));
     return [...visible, ...hidden, ...(admixtureRunId !== null ? ["admixture"] : [])];
@@ -639,6 +793,9 @@ export function Explorer() {
     setSearchField("group_id");
     setSorting([]);
     setAdmixtureRunId(null);
+    setSnpFilters([]);
+    setSnpColor(null);
+    setSnpColumns([]);
     setPage(1);
   }
 
@@ -654,6 +811,9 @@ export function Explorer() {
     setTimeWindow(fullTimeWindow);
     setTimeMode("calendar");
     setAdmixtureRunId(null);
+    setSnpFilters([]);
+    setSnpColor(null);
+    setSnpColumns([]);
     setPageSize(100);
     setMapBaseStyle("light");
     setMapColorMode("fixed");
@@ -664,17 +824,21 @@ export function Explorer() {
     setMapShowOutlierLinks(false);
     setMapShowCentroids(true);
     setMapShowLegend(true);
+    setMapSnpPalette(DEFAULT_MAP_SNP_PALETTE);
+    setMapSnpIncludeUnmutated(false);
     setMapProjectionMode("flat");
     setPage(1);
   }
 
   const shownFields = activeFields;
-  const hiddenFields = allFields.filter((field) => !visibleColumns[entity]?.includes(field.id));
-  const sortableFields = allFields.filter((field) => field.sortable !== false);
+  const hiddenFields = allTableFields.filter((field) => !visibleColumns[entity]?.includes(field.id));
+  const sortableFields = allTableFields.filter((field) => field.sortable !== false);
   const isSearchExpanded = globalSearch.trim().length > 0;
   const headerTotal = viewMode === "map" ? mapTotal : total;
   const mapIssueCount = viewMode === "map" ? (mapReview?.unmappedSamples.total ?? 0) + (mapReview?.coordinateIssues.total ?? 0) : 0;
   const mapIssueBadge = mapIssueCount > 999 ? "999+" : formatCount(mapIssueCount);
+  const snpColorValue = snpColor ? `${snpColor.snpId}|${snpColor.alleleRole}` : "";
+  const snpCacheBusy = snpCacheStatus?.phase === "caching" || snpCacheStatus?.phase === "clearing";
 
   useEffect(() => {
     if (viewMode !== "map" || mapIssueCount === 0) setMapIssuePopoverOpen(false);
@@ -726,6 +890,136 @@ export function Explorer() {
     setPage(1);
   }
 
+  function toggleSnpCopyState(state: SnpCopyState) {
+    setSnpCopyStates((current) => (
+      current.includes(state)
+        ? current.filter((item) => item !== state)
+        : [...current, state].sort((a, b) => {
+            const order = (value: SnpCopyState) => value === "missing" ? 3 : value;
+            return order(a) - order(b);
+          })
+    ));
+  }
+
+  function markVariantCached(snpId: string, sampleCount: number | null) {
+    setSnpResults((current) => current.map((variant) => (
+      variant.snp_id === snpId
+        ? { ...variant, cached: true, cached_count: sampleCount ?? variant.sample_count ?? variant.cached_count, sample_count: sampleCount ?? variant.sample_count }
+        : variant
+    )));
+    setSelectedSnp((current) => current && current.snp_id === snpId
+      ? { ...current, cached: true, cached_count: sampleCount ?? current.sample_count ?? current.cached_count, sample_count: sampleCount ?? current.sample_count }
+      : current
+    );
+  }
+
+  async function ensureSnpCachedFromUi(snpId: string) {
+    const knownSampleCount = selectedSnp?.snp_id === snpId ? selectedSnp.sample_count : undefined;
+    setSnpCacheStatus({
+      phase: "caching",
+      snpId,
+      message: `Caching ${snpId}`,
+      detail: knownSampleCount ? `Preparing ${formatCount(knownSampleCount)} sample calls from AADR PACKEDANCESTRYMAP.` : "Reading one packed genotype row from AADR."
+    });
+    const response = await fetch("/api/genotypes/cache", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ snpId })
+    });
+    const data = (await response.json()) as { cached?: boolean; inserted?: number; sampleCount?: number; error?: string };
+    if (!response.ok) throw new Error(data.error ?? "SNP cache failed");
+    const sampleCount = Number(data.sampleCount ?? knownSampleCount ?? 0) || null;
+    markVariantCached(snpId, sampleCount);
+    setSnpCacheStatus({
+      phase: "done",
+      snpId,
+      message: data.cached ? `${snpId} was already cached` : `${snpId} cached`,
+      detail: data.cached
+        ? sampleCount ? `${formatCount(sampleCount)} sample calls available.` : "Sample calls are available."
+        : `${formatCount(Number(data.inserted ?? sampleCount ?? 0))} sample calls cached.`
+    });
+    window.setTimeout(() => {
+      setSnpCacheStatus((current) => current?.phase === "done" && current.snpId === snpId ? null : current);
+    }, 2600);
+  }
+
+  async function addSnpFilter() {
+    const snpId = selectedSnp?.snp_id ?? snpSearch.trim();
+    if (!snpId || !snpCopyStates.length) return;
+    try {
+      await ensureSnpCachedFromUi(snpId);
+      const nextFilter: SnpFilter = {
+        snpId,
+        alleleRole: snpAlleleRole,
+        copyStates: snpCopyStates
+      };
+      setSnpFilters((current) => [
+        ...current.filter((filter) => !(filter.snpId === nextFilter.snpId && filter.alleleRole === nextFilter.alleleRole)),
+        nextFilter
+      ]);
+      setSnpColor({ snpId, alleleRole: snpAlleleRole });
+      setPage(1);
+    } catch (cacheError) {
+      setSnpCacheStatus({
+        phase: "error",
+        snpId,
+        message: "SNP cache failed",
+        detail: cacheError instanceof Error ? cacheError.message : "Unable to cache SNP calls."
+      });
+    }
+  }
+
+  function removeSnpFilter(index: number) {
+    setSnpFilters((current) => {
+      const removed = current[index];
+      const next = current.filter((_, itemIndex) => itemIndex !== index);
+      setSnpColor((currentColor) => {
+        if (!currentColor || !removed || currentColor.snpId !== removed.snpId || currentColor.alleleRole !== removed.alleleRole) return currentColor;
+        const fallback = next[0];
+        return fallback ? { snpId: fallback.snpId, alleleRole: fallback.alleleRole } : null;
+      });
+      return next;
+    });
+    setSorting((current) => current.filter((entry) => !entry.id.startsWith("snp_")));
+    setPage(1);
+  }
+
+  function makeSnpMapColor(filter: SnpFilter) {
+    setSnpColor({ snpId: filter.snpId, alleleRole: filter.alleleRole });
+    setMapColorMode("snp");
+  }
+
+  async function clearSnpCacheData() {
+    if (!window.confirm("Clear cached genotype calls for the current AADR genotype dataset? The SNP index remains available.")) return;
+    setSnpCacheStatus({
+      phase: "clearing",
+      message: "Clearing SNP cache",
+      detail: "Removing cached genotype calls. Active SNP filters will recache on next use."
+    });
+    try {
+      const response = await fetch("/api/genotypes/cache", { method: "DELETE" });
+      const data = (await response.json()) as { deleted?: number; error?: string };
+      if (!response.ok) throw new Error(data.error ?? "Could not clear SNP cache");
+      setSnpResults((current) => current.map((variant) => ({ ...variant, cached: false, cached_count: 0 })));
+      setSelectedSnp((current) => current ? { ...current, cached: false, cached_count: 0 } : current);
+      tableQueryCacheRef.current.clear();
+      setSnpCacheStatus({
+        phase: "done",
+        message: "SNP cache cleared",
+        detail: `${formatCount(Number(data.deleted ?? 0))} cached calls removed.`
+      });
+      window.setTimeout(() => {
+        setSnpCacheStatus((current) => current?.phase === "done" ? null : current);
+      }, 2600);
+    } catch (clearError) {
+      setSnpCacheStatus({
+        phase: "error",
+        message: "Could not clear SNP cache",
+        detail: clearError instanceof Error ? clearError.message : "Cache clear failed."
+      });
+    }
+  }
+
   function saveCurrentProfile(profilesFile = profiles) {
     const current = buildCurrentProfileView(activeProfileName);
     const views = profilesFile.views.some((view) => view.name === activeProfileName)
@@ -762,6 +1056,8 @@ export function Explorer() {
       sort: [],
       search: { query: "", field: "group_id" },
       timeWindow: fullTimeWindow,
+      snpFilters: [],
+      snpColor: null,
       order: { sample: schema.defaults.sample, group: schema.defaults.group },
       columnSize: { sample: {}, group: {} }
     };
@@ -857,6 +1153,8 @@ export function Explorer() {
             page: exportPage,
             pageSize: CSV_EXPORT_PAGE_SIZE,
             admixtureRunId: requestAdmixtureRunId,
+            snpFilters,
+            snpColor,
             mapBounds: null
           })
         });
@@ -1130,14 +1428,14 @@ export function Explorer() {
         />
 
         <button
-          className={`button icon-label toolbar-action ${panelMode === "filters" ? "active" : ""} ${appliedFilterCount ? "state-active" : ""}`}
+          className={`button icon-label toolbar-action ${panelMode === "filters" ? "active" : ""} ${totalFilterCount ? "state-active" : ""}`}
           type="button"
           onClick={() => setPanelMode((current) => (current === "filters" ? null : "filters"))}
           aria-expanded={panelMode === "filters"}
           title="Filters"
         >
           <Filter size={15} />
-          <span className="toolbar-label">Filters{appliedFilterCount ? ` ${appliedFilterCount}` : ""}</span>
+          <span className="toolbar-label">Filters{totalFilterCount ? ` ${totalFilterCount}` : ""}</span>
         </button>
 
         <button
@@ -1253,35 +1551,201 @@ export function Explorer() {
             <section>
               {schema ? (
                 <>
-                  <FilterBuilder
-                    value={filterDraft}
-                    fields={schema.filterableFields}
-                    operatorsByKind={schema.operatorsByKind}
-                    onChange={setFilterDraft}
-                  />
-                  <div className="panel-footer">
-                    <button
-                      className="button primary"
-                      type="button"
-                      onClick={() => {
-                        setFilter(filterDraft);
-                        setPage(1);
-                        setPanelMode(null);
-                      }}
-                    >
-                      Apply filters
-                    </button>
-                    <button
-                      className="button"
-                      type="button"
-                      onClick={() => {
-                        setFilterDraft(emptyFilter);
-                        setFilter(emptyFilter);
-                        setPage(1);
-                      }}
-                    >
-                      Clear
-                    </button>
+                  <div className="metadata-filter-block">
+                    <div className="panel-section-heading">
+                      <span>Metadata Filters</span>
+                      {appliedFilterCount ? <small>{formatCount(appliedFilterCount)} active</small> : null}
+                    </div>
+                    <FilterBuilder
+                      value={filterDraft}
+                      fields={schema.filterableFields}
+                      operatorsByKind={schema.operatorsByKind}
+                      onChange={setFilterDraft}
+                    />
+                    <div className="panel-footer metadata-filter-footer">
+                      <button
+                        className="button primary"
+                        type="button"
+                        onClick={() => {
+                          setFilter(filterDraft);
+                          setPage(1);
+                          setPanelMode(null);
+                        }}
+                      >
+                        Apply filters
+                      </button>
+                      <button
+                        className="button"
+                        type="button"
+                        onClick={() => {
+                          setFilterDraft(emptyFilter);
+                          setFilter(emptyFilter);
+                          setPage(1);
+                        }}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="snp-panel">
+                    <div className="snp-panel-header">
+                      <div>
+                        <span>SNP Genotype</span>
+                        {snpFilters.length ? <small>{formatCount(snpFilters.length)} active</small> : null}
+                      </div>
+                      <div className="snp-panel-actions">
+                        {snpFilters.length ? (
+                          <button
+                            className="button"
+                            type="button"
+                            onClick={() => {
+                              setSnpFilters([]);
+                              setSnpColor(null);
+                              setSnpColumns([]);
+                              setSorting((current) => current.filter((entry) => !entry.id.startsWith("snp_")));
+                              setPage(1);
+                            }}
+                          >
+                            Clear SNP filters
+                          </button>
+                        ) : null}
+                        <button className="button" type="button" onClick={() => void clearSnpCacheData()} disabled={snpCacheBusy}>
+                          <Database size={14} />
+                          Clear cache data
+                        </button>
+                      </div>
+                    </div>
+                    <label className="snp-search-control">
+                      <Search size={14} />
+                      <input
+                        className="input"
+                        value={snpSearch}
+                        placeholder="rs4988235 or chr2:136608646"
+                        onChange={(event) => {
+                          setSnpSearch(event.target.value);
+                          setSelectedSnp(null);
+                        }}
+                      />
+                    </label>
+                    {snpSearchError ? <p className="panel-error">{snpSearchError}</p> : null}
+                    {snpResults.length ? (
+                      <div className="snp-result-list">
+                        {snpResults.map((variant) => (
+                          <button
+                            className={`snp-result ${selectedSnp?.id === variant.id ? "active" : ""}`}
+                            type="button"
+                            key={variant.id}
+                            onClick={() => {
+                              setSelectedSnp(variant);
+                              setSnpSearch(variant.snp_id);
+                            }}
+                          >
+                            <span className="snp-result-main">
+                              <b>{variant.snp_id}</b>
+                              <small>{genotypeVariantPosition(variant)} · {genotypeVariantAlleles(variant)}</small>
+                            </span>
+                            <span className={`snp-cache-badge ${variant.cached ? "cached" : ""}`}>
+                              {genotypeVariantCacheLabel(variant)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : snpSearchLoading ? (
+                      <p className="panel-empty compact">Searching SNPs...</p>
+                    ) : null}
+
+                    <div className="snp-control-grid">
+                      <div className="snp-allele-row">
+                        <span>Counted allele</span>
+                        <div className="settings-segmented compact">
+                          <button
+                            className={snpAlleleRole === "ref" ? "active" : ""}
+                            type="button"
+                            onClick={() => setSnpAlleleRole("ref")}
+                          >
+                            {snpAlleleLabel(selectedSnp, "ref")}
+                          </button>
+                          <button
+                            className={snpAlleleRole === "alt" ? "active" : ""}
+                            type="button"
+                            onClick={() => setSnpAlleleRole("alt")}
+                          >
+                            {snpAlleleLabel(selectedSnp, "alt")}
+                          </button>
+                        </div>
+                      </div>
+                      <div className="snp-copy-grid">
+                        {snpCopyStateLabels.map((state) => (
+                          <label key={String(state.value)}>
+                            <input
+                              type="checkbox"
+                              checked={snpCopyStates.includes(state.value)}
+                              onChange={() => toggleSnpCopyState(state.value)}
+                            />
+                            <span>{state.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="snp-action-row">
+                      <button className="button" type="button" onClick={() => setSnpCopyStates([1, 2])} disabled={snpCacheBusy}>
+                        Carries allele
+                      </button>
+                      <button
+                        className="button primary"
+                        type="button"
+                        onClick={() => void addSnpFilter()}
+                        disabled={snpCacheBusy || !snpCopyStates.length || !(selectedSnp?.snp_id ?? snpSearch.trim())}
+                      >
+                        {snpCacheStatus?.phase === "caching" ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
+                        Add SNP
+                      </button>
+                    </div>
+
+                    {snpCacheStatus ? (
+                      <div className={`snp-cache-progress ${snpCacheStatus.phase}`}>
+                        {snpCacheStatus.phase === "caching" || snpCacheStatus.phase === "clearing" ? (
+                          <Loader2 className="spin" size={16} />
+                        ) : (
+                          <Database size={16} />
+                        )}
+                        <div>
+                          <b>{snpCacheStatus.message}</b>
+                          {snpCacheStatus.detail ? <small>{snpCacheStatus.detail}</small> : null}
+                          {snpCacheStatus.phase === "caching" || snpCacheStatus.phase === "clearing" ? <span className="snp-progress-bar"><i /></span> : null}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {snpFilters.length ? (
+                      <div className="snp-active-list">
+                        <div className="snp-active-heading">Active SNP Filters</div>
+                        {snpFilters.map((filter, index) => {
+                          const colorActive = snpColor?.snpId === filter.snpId && snpColor.alleleRole === filter.alleleRole;
+                          return (
+                            <div className="snp-active-row" key={`${filter.snpId}:${filter.alleleRole}:${index}`}>
+                              <div>
+                                <b>{filter.snpId}</b>
+                                <small>{filter.alleleRole.toUpperCase()} · {formatSnpCopyStates(filter.copyStates)}</small>
+                              </div>
+                              <button
+                                className={`button ${colorActive ? "state-active" : ""}`}
+                                type="button"
+                                onClick={() => makeSnpMapColor(filter)}
+                              >
+                                <MapIcon size={14} />
+                                Map color
+                              </button>
+                              <button className="icon-button" type="button" onClick={() => removeSnpFilter(index)} aria-label="Remove SNP filter">
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
                   </div>
                 </>
               ) : null}
@@ -1469,6 +1933,17 @@ export function Explorer() {
                           >
                             Gradient
                           </button>
+                          <button
+                            className={mapColorMode === "snp" ? "active" : ""}
+                            type="button"
+                            disabled={!snpFilters.length}
+                            onClick={() => {
+                              if (!snpColor && snpFilters[0]) setSnpColor({ snpId: snpFilters[0].snpId, alleleRole: snpFilters[0].alleleRole });
+                              setMapColorMode("snp");
+                            }}
+                          >
+                            SNP
+                          </button>
                         </div>
                       </div>
                       {mapColorMode === "fixed" ? (
@@ -1482,7 +1957,7 @@ export function Explorer() {
                             ))}
                           </select>
                         </label>
-                      ) : (
+                      ) : mapColorMode === "gradient" ? (
                         <label className="settings-row">
                           <span>Field</span>
                           <select className="select" value={mapGradientBy} onChange={(event) => setMapGradientBy(event.target.value as MapGradientBy)}>
@@ -1493,6 +1968,56 @@ export function Explorer() {
                             ))}
                           </select>
                         </label>
+                      ) : (
+                        <>
+                          <label className="settings-row">
+                            <span>SNP</span>
+                            <select
+                              className="select"
+                              value={snpColorValue}
+                              disabled={!snpFilters.length}
+                              onChange={(event) => {
+                                const [snpId, alleleRole] = event.target.value.split("|");
+                                if (snpId && (alleleRole === "ref" || alleleRole === "alt")) setSnpColor({ snpId, alleleRole });
+                              }}
+                            >
+                              {snpFilters.map((filter) => (
+                                <option key={`${filter.snpId}|${filter.alleleRole}`} value={`${filter.snpId}|${filter.alleleRole}`}>
+                                  {filter.snpId} {filter.alleleRole.toUpperCase()}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="settings-row">
+                            <span>Palette</span>
+                            <div className="snp-palette-grid" role="group" aria-label="SNP genotype palette">
+                              {mapSnpPalettes.map((palette) => (
+                                <button
+                                  className={`snp-palette-button ${mapSnpPalette === palette.id ? "active" : ""}`}
+                                  key={palette.id}
+                                  type="button"
+                                  onClick={() => setMapSnpPalette(palette.id)}
+                                  title={`${palette.label}: 2 copies, 1 copy, 0 copies`}
+                                >
+                                  <span>{palette.label}</span>
+                                  <span className="snp-palette-swatches" aria-hidden="true">
+                                    <i style={{ background: palette.colors.two }} />
+                                    <i style={{ background: palette.colors.one }} />
+                                    <i style={{ background: palette.colors.zero }} />
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <label className="settings-row">
+                            <span>Show 0-copy samples</span>
+                            <input
+                              type="checkbox"
+                              checked={mapSnpIncludeUnmutated}
+                              onChange={(event) => setMapSnpIncludeUnmutated(event.target.checked)}
+                            />
+                          </label>
+                        </>
                       )}
                     </div>
                     <div className="settings-block">
@@ -1633,8 +2158,8 @@ export function Explorer() {
               {viewMode === "table" ? (
                 <DataTable
                   rows={displayedRows}
-                  fields={activeFields}
-                  visibleColumns={visibleColumns[entity] ?? []}
+                  fields={tableFields}
+                  visibleColumns={tableVisibleColumns}
                   sorting={sorting}
                   onSortingChange={(next) => {
                     setSorting(next);
@@ -1655,6 +2180,10 @@ export function Explorer() {
                   colorMode={mapColorMode}
                   colorBy={mapColorBy}
                   gradientBy={mapGradientBy}
+                  snpFilters={snpFilters}
+                  snpColor={snpColor}
+                  snpPalette={mapSnpPalette}
+                  includeSnpZeroCopies={mapSnpIncludeUnmutated}
                   presentation={mapPresentation}
                   combineNearbyGroups={false}
                   showGroupCounts={mapShowGroupCounts}

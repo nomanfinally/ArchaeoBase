@@ -16,7 +16,7 @@
 - `Age BP` is the ordinary continuous age scale. Its legend runs oldest-to-youngest from left to right, keeps Paleolithic/Mesolithic values in dark-to-light blue, and uses extra Bronze Age anchors so dense Bronze Age samples receive more color separation.
 - `Age BP (split)` is a separate cached spectrum. It uses four meaningful horizontal segments: Paleolithic-Mesolithic, Neolithic-Chalcolithic, Bronze Age, and Iron Age-Modern.
 - Bronze Age now has EBA, MBA, MLBA, and LBA period labels for sample metadata, but the split-age spectrum keeps Bronze Age as one purple-to-red bar with small outside subperiod labels.
-- Categorical `Period` colors prioritize visual separation over strict within-era shade continuity. Modern is green, Iron/Classical/Medieval use cool neutral/cyan/violet colors, and Bronze Age stays in a distinct purple-to-red warm range.
+- Categorical `Period` colors prioritize visual separation over strict within-era shade continuity. Paleolithic stays dark blue, Mesolithic uses light blues, Bronze Age uses a red-family spectrum, and the other periods use divergent green/yellow/brown/slate/teal/purple/green colors.
 - Population-cluster marker colors normalize known AADR suffix tokens such as `.AG`, `.TW`, and `.AG.TW` before assigning colors, so suffix-only data-type variants of the same group receive the same cached population color.
 - `Age BP (split)` is intentionally not a calibrated-width numeric scale in the legend. The four macro segments are equal width so labels remain readable; tick marks inside each segment show which period/subperiod belongs to that color range.
 - Population-cluster styling uses a capped palette of 12 colors. The cache still assigns nearby groups divergent colors when possible, but the legend is aggregated by color class instead of listing every group ID.
@@ -30,3 +30,13 @@
 - Region categories are `Africa`, `Asia`, `Europe`, `North America`, `South America`, `Oceania`, and `Unknown`. The mapping follows UNSD M49 regions/subregions where possible; Americas are split into North America and South America for explorer filtering.
 - The mapping CSV is intentionally tracked even though the rest of `data/` is ignored, because import and backfill scripts depend on it.
 - The explorer keeps active view state in browser local storage and profile YAML. The time-window display mode (`BCE/CE` or `BP`) is persisted with the rest of the view so reopening the period panel preserves the user's mode.
+
+## SNP Genotype Lookup
+
+- AADR PACKEDANCESTRYMAP `.geno/.snp/.ind` files are the read-only genotype authority. The app does not use PLINK in the runtime path and does not copy the full genotype matrix into PostgreSQL.
+- PostgreSQL stores genotype dataset metadata, `.ind` sample order mapped to `samples.id`, searchable `.snp` variant metadata, and cached per-sample calls only for SNPs users query.
+- First use of an indexed SNP decodes one packed `.geno` row and caches calls in `genotype_variant_calls`; `npm run genotypes:cache -- --snp <rsid>` can prewarm known SNPs for demos.
+- Normal metadata table/map queries do not touch genotype tables. SNP joins are added only when `snpFilters` or SNP map coloring is active.
+- SNP table columns are dynamic and sortable only for active SNP filters returned by the server. The server resolves each requested SNP against indexed metadata before using a generated SQL expression.
+- Map SNP coloring is applied at query/render time from cached calls. `sample_map_cache` and `group_map_cache` are not rebuilt for genotype state.
+- SNP map palettes are request/profile settings, not cached map data. Each palette colors selected-allele genotype states with one hue family: 2 copies darkest, 1 copy lighter, and 0 copies lightest; missing calls remain black.

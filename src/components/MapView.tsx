@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import type { Feature, FeatureCollection, LineString, Point } from "geojson";
 import type { GeoJSONSource, IControl, Map as MapLibreMap, MapMouseEvent, Popup, StyleSpecification } from "maplibre-gl";
 import { Eye, EyeOff, Globe2, Map as MapIcon, Maximize2, Minimize2, Moon, Route, Satellite, Sun } from "lucide-react";
-import type { FilterNode } from "@/lib/filters/types";
+import type { FilterNode, SnpColorSpec, SnpFilter } from "@/lib/filters/types";
 import type {
   MapColorBy,
   MapColorMode,
@@ -15,7 +15,8 @@ import type {
   MapPointProperties,
   MapPresentation,
   MapQueryResponse,
-  MapQuerySummary
+  MapQuerySummary,
+  MapSnpPalette
 } from "@/lib/map/types";
 
 export type MapBaseStyle = "dark" | "light" | "streets" | "satellite";
@@ -31,6 +32,10 @@ type Props = {
   colorMode: MapColorMode;
   colorBy: MapColorBy;
   gradientBy: MapGradientBy;
+  snpFilters: SnpFilter[];
+  snpColor: SnpColorSpec | null;
+  snpPalette: MapSnpPalette;
+  includeSnpZeroCopies: boolean;
   presentation: MapPresentation;
   combineNearbyGroups: boolean;
   showGroupCounts: boolean;
@@ -400,10 +405,10 @@ function ensureMapLayers(
         "icon-size": [
           "case",
           ["==", ["get", "kind"], "aggregate"],
-          ["step", ["get", "sampleCount"], 0.86, 25, 1, 100, 1.16, 300, 1.32],
+          ["step", ["get", "sampleCount"], 0.69, 25, 0.8, 100, 0.93, 300, 1.06],
           ["==", ["get", "kind"], "group"],
-          0.54,
-          0.46
+          0.43,
+          0.37
         ],
         "icon-allow-overlap": true,
         "icon-ignore-placement": true,
@@ -641,6 +646,10 @@ export function MapView({
   colorBy,
   colorMode,
   gradientBy,
+  snpFilters,
+  snpColor,
+  snpPalette,
+  includeSnpZeroCopies,
   presentation,
   combineNearbyGroups,
   showGroupCounts,
@@ -883,6 +892,10 @@ export function MapView({
           colorMode,
           colorBy,
           gradientBy,
+          snpFilters,
+          snpColor,
+          snpPalette,
+          includeSnpZeroCopies,
           colorTheme: "dark",
           showGroupCounts
         };
@@ -920,7 +933,24 @@ export function MapView({
 
     void run();
     return () => controller.abort();
-  }, [filter, globalSearch, searchField, mapReady, presentation, combineNearbyGroups, colorBy, colorMode, gradientBy, showGroupCounts, onSummaryChange, onReviewChange]);
+  }, [
+    filter,
+    globalSearch,
+    searchField,
+    mapReady,
+    presentation,
+    combineNearbyGroups,
+    colorBy,
+    colorMode,
+    gradientBy,
+    snpFilters,
+    snpColor,
+    snpPalette,
+    includeSnpZeroCopies,
+    showGroupCounts,
+    onSummaryChange,
+    onReviewChange
+  ]);
 
   const mapStatus = mapData?.summary;
   const pointCount = mapData?.features.features.filter((feature) => feature.properties.kind !== "centroid").length ?? 0;

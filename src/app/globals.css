@@ -1686,6 +1686,329 @@ button:disabled {
   line-height: 1.45;
 }
 
+.panel-empty.compact {
+  margin: 4px 2px;
+}
+
+.panel-error {
+  margin: 5px 2px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.metadata-filter-block,
+.snp-panel {
+  display: grid;
+  gap: 9px;
+}
+
+.metadata-filter-block {
+  margin-bottom: 14px;
+}
+
+.metadata-filter-footer {
+  position: static;
+  bottom: auto;
+  padding-top: 8px;
+  background: transparent;
+}
+
+.panel-section-heading,
+.snp-panel-header,
+.snp-panel-actions,
+.snp-allele-row,
+.snp-action-row,
+.snp-active-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-section-heading,
+.snp-panel-header {
+  justify-content: space-between;
+}
+
+.panel-section-heading > span,
+.snp-panel-header span,
+.snp-allele-row > span,
+.snp-active-heading {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.panel-section-heading small,
+.snp-panel-header small {
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 560;
+}
+
+.snp-panel {
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfbfa;
+}
+
+.snp-panel-header > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.snp-panel-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.snp-panel-actions .button {
+  min-height: 28px;
+  padding: 3px 7px;
+  font-size: 12px;
+}
+
+.snp-search-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.snp-search-control:focus-within {
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 2px rgba(47, 95, 79, 0.1);
+}
+
+.snp-search-control .input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.snp-result-list,
+.snp-active-list,
+.snp-control-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.snp-result-list {
+  max-height: 182px;
+  overflow: auto;
+}
+
+.snp-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  font-size: 12.5px;
+}
+
+.snp-result:hover,
+.snp-result.active {
+  border-color: #9eb9a8;
+  background: #f4faf6;
+}
+
+.snp-result-main,
+.snp-active-row > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.snp-result-main b,
+.snp-active-row b {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snp-result-main small,
+.snp-active-row small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snp-cache-badge {
+  min-width: 76px;
+  padding: 3px 6px;
+  border: 1px solid #e2ded5;
+  border-radius: 999px;
+  background: #f5f1e8;
+  color: #75634a;
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.snp-cache-badge.cached {
+  border-color: #bad8c4;
+  background: #edf7f0;
+  color: #2f6f4f;
+}
+
+.snp-allele-row {
+  justify-content: space-between;
+}
+
+.snp-allele-row .settings-segmented {
+  flex: 1 1 auto;
+}
+
+.snp-copy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(82px, 1fr));
+  gap: 5px;
+}
+
+.snp-copy-grid label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 29px;
+  padding: 4px 5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.snp-copy-grid input {
+  margin: 0;
+}
+
+.snp-action-row {
+  justify-content: flex-end;
+}
+
+.snp-cache-progress {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.snp-cache-progress.done {
+  border-color: #bad8c4;
+  background: #f4faf6;
+}
+
+.snp-cache-progress.error {
+  border-color: rgba(160, 68, 68, 0.32);
+  background: #fff7f7;
+  color: var(--danger);
+}
+
+.snp-cache-progress > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.snp-cache-progress b {
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.snp-cache-progress small {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.snp-progress-bar {
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e6e4df;
+}
+
+.snp-progress-bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42%;
+  border-radius: inherit;
+  background: var(--accent);
+  animation: indeterminate-progress 1s ease-in-out infinite;
+}
+
+.snp-active-heading {
+  margin-top: 2px;
+}
+
+.snp-active-row {
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+}
+
+.snp-active-row > div {
+  flex: 1 1 auto;
+}
+
+.snp-active-row .button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 3px 7px;
+  font-size: 12px;
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes indeterminate-progress {
+  0% {
+    left: -42%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
 .settings-stack {
   display: grid;
   gap: 10px;
@@ -1731,6 +2054,52 @@ button:disabled {
   min-height: 34px;
   border-radius: 6px;
   background: var(--panel);
+}
+
+.snp-palette-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.snp-palette-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.snp-palette-button.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+.snp-palette-button span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snp-palette-swatches {
+  display: grid;
+  grid-template-columns: repeat(3, 12px);
+  gap: 3px;
+}
+
+.snp-palette-swatches i {
+  width: 12px;
+  height: 12px;
+  border: 1px solid color-mix(in srgb, #000 18%, transparent);
+  border-radius: 999px;
 }
 
 .profile-select-panel {

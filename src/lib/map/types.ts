@@ -1,5 +1,5 @@
 import type { FeatureCollection, LineString, Point } from "geojson";
-import type { FilterNode, MapBounds } from "@/lib/filters/types";
+import type { FilterNode, MapBounds, SnpColorSpec, SnpFilter } from "@/lib/filters/types";
 
 export type MapPresentation = "smart_split" | "group_locations" | "sample_cloud";
 
@@ -12,11 +12,24 @@ export type MapColorBy =
   | "mtdna_initial"
   | "period";
 
-export type MapColorMode = "fixed" | "gradient";
+export type MapColorMode = "fixed" | "gradient" | "snp";
 
 export type MapGradientBy = "snp_1240k" | "snp_2m" | "coverage_1150k" | "date_mean_bp" | "smart_date_mean_bp";
 
 export type MapColorTheme = "light" | "dark";
+
+export const mapSnpPalettes = [
+  { id: "red", label: "Red", colors: { two: "#991b1b", one: "#ef4444", zero: "#fecaca" } },
+  { id: "blue", label: "Blue", colors: { two: "#1d4ed8", one: "#60a5fa", zero: "#dbeafe" } },
+  { id: "green", label: "Green", colors: { two: "#166534", one: "#4ade80", zero: "#dcfce7" } },
+  { id: "violet", label: "Violet", colors: { two: "#6d28d9", one: "#a78bfa", zero: "#ede9fe" } },
+  { id: "orange", label: "Orange", colors: { two: "#c2410c", one: "#fb923c", zero: "#ffedd5" } },
+  { id: "slate", label: "Slate", colors: { two: "#334155", one: "#94a3b8", zero: "#e2e8f0" } }
+] as const;
+
+export type MapSnpPalette = (typeof mapSnpPalettes)[number]["id"];
+
+export const DEFAULT_MAP_SNP_PALETTE: MapSnpPalette = "red";
 
 export type MapViewport = {
   width: number;
@@ -37,6 +50,10 @@ export type MapQueryRequest = {
   gradientBy?: MapGradientBy;
   colorTheme?: MapColorTheme;
   showGroupCounts?: boolean;
+  snpFilters?: SnpFilter[];
+  snpColor?: SnpColorSpec | null;
+  snpPalette?: MapSnpPalette;
+  includeSnpZeroCopies?: boolean;
 };
 
 export type MapPointKind = "aggregate" | "group" | "sample" | "centroid";

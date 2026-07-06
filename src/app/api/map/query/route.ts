@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import type { MapQueryRequest } from "@/lib/map/types";
+import { mapSnpPalettes, type MapQueryRequest, type MapSnpPalette } from "@/lib/map/types";
 import { runMapQuery } from "@/lib/map/query";
 
 const filterNodeSchema: z.ZodTypeAny = z.lazy(() =>
@@ -18,6 +18,21 @@ const filterNodeSchema: z.ZodTypeAny = z.lazy(() =>
     })
   ])
 );
+
+const snpCopyStateSchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal("missing")]);
+
+const snpFilterSchema = z.object({
+  snpId: z.string().min(1),
+  alleleRole: z.union([z.literal("ref"), z.literal("alt")]).default("alt"),
+  copyStates: z.array(snpCopyStateSchema).default([1, 2])
+});
+
+const snpColorSchema = z.object({
+  snpId: z.string().min(1),
+  alleleRole: z.union([z.literal("ref"), z.literal("alt")]).default("alt")
+});
+
+const mapSnpPaletteIds = mapSnpPalettes.map((palette) => palette.id) as [MapSnpPalette, ...MapSnpPalette[]];
 
 const requestSchema = z.object({
   filter: filterNodeSchema.nullish(),
@@ -40,7 +55,7 @@ const requestSchema = z.object({
     .nullish(),
   presentation: z.union([z.literal("smart_split"), z.literal("group_locations"), z.literal("sample_cloud")]).default("sample_cloud"),
   combineNearbyGroups: z.boolean().optional(),
-  colorMode: z.union([z.literal("fixed"), z.literal("gradient")]).default("fixed"),
+  colorMode: z.union([z.literal("fixed"), z.literal("gradient"), z.literal("snp")]).default("fixed"),
   colorBy: z
     .union([
       z.literal("single"),
@@ -54,7 +69,11 @@ const requestSchema = z.object({
     .default("sex"),
   gradientBy: z.union([z.literal("snp_1240k"), z.literal("snp_2m"), z.literal("coverage_1150k"), z.literal("date_mean_bp"), z.literal("smart_date_mean_bp")]).default("snp_1240k"),
   colorTheme: z.union([z.literal("light"), z.literal("dark")]).default("light"),
-  showGroupCounts: z.boolean().optional()
+  showGroupCounts: z.boolean().optional(),
+  snpFilters: z.array(snpFilterSchema).optional(),
+  snpColor: snpColorSchema.nullish(),
+  snpPalette: z.enum(mapSnpPaletteIds).optional(),
+  includeSnpZeroCopies: z.boolean().optional()
 });
 
 export async function POST(request: Request) {

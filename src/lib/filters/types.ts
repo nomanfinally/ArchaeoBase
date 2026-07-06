@@ -22,6 +22,20 @@ export type SortSpec = {
   direction: SortDirection;
 };
 
+export type SnpAlleleRole = "ref" | "alt";
+export type SnpCopyState = 0 | 1 | 2 | "missing";
+
+export type SnpFilter = {
+  snpId: string;
+  alleleRole: SnpAlleleRole;
+  copyStates: SnpCopyState[];
+};
+
+export type SnpColorSpec = {
+  snpId: string;
+  alleleRole: SnpAlleleRole;
+};
+
 export type MapBounds = {
   west: number;
   south: number;
@@ -41,6 +55,8 @@ export type QueryRequest = {
   visibleColumns?: string[];
   mapBounds?: MapBounds | null;
   admixtureRunId?: number | null;
+  snpFilters?: SnpFilter[];
+  snpColor?: SnpColorSpec | null;
 };
 
 export type SqlFragment = {

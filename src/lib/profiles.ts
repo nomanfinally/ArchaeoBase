@@ -1,5 +1,5 @@
 import { parse, stringify } from "yaml";
-import type { FilterCondition, FilterNode, SortDirection, SortSpec } from "@/lib/filters/types";
+import type { FilterCondition, FilterNode, SnpAlleleRole, SnpColorSpec, SnpCopyState, SnpFilter, SortDirection, SortSpec } from "@/lib/filters/types";
 import type { FieldDefinition, Operator } from "@/lib/schema/fields";
 import type { PeriodOption } from "@/lib/periods";
 
@@ -21,6 +21,8 @@ export type ProfileMapSettings = {
   showLegend?: boolean;
   fadeLegend?: boolean;
   projectionMode?: string;
+  snpPalette?: string;
+  includeSnpZeroCopies?: boolean;
 };
 
 export type ProfileTimeWindow = {
@@ -45,6 +47,8 @@ export type ProfileView = {
   timeMode?: "calendar" | "bp";
   periods?: PeriodOption[];
   admixtureRunId?: number | null;
+  snpFilters?: SnpFilter[];
+  snpColor?: SnpColorSpec | null;
   pageSize?: number;
   map?: ProfileMapSettings;
   panel?: {
@@ -183,7 +187,7 @@ function normalizeSort(value: unknown, schema: ProfileSchema, entity: Entity, op
     const object = asObject(item);
     const field = asString(object?.field);
     const direction: SortDirection = object?.direction === "desc" ? "desc" : "asc";
-    if (!sortable.has(field)) {
+    if (!sortable.has(field) && !/^snp_\d+$/.test(field)) {
       const message = `sort[${index}].field '${field}' is not sortable for ${entity}.`;
       if (options.strict) errors.push(message);
       continue;
@@ -191,6 +195,48 @@ function normalizeSort(value: unknown, schema: ProfileSchema, entity: Entity, op
     if (!next.some((entry) => entry.field === field)) next.push({ field, direction });
   }
   return next.slice(0, 8);
+}
+
+function normalizeSnpAlleleRole(value: unknown): SnpAlleleRole {
+  return value === "ref" ? "ref" : "alt";
+}
+
+function normalizeSnpCopyStates(value: unknown): SnpCopyState[] {
+  if (!Array.isArray(value)) return [];
+  const states: SnpCopyState[] = [];
+  for (const item of value) {
+    const state = item === "missing" ? "missing" : Number(item);
+    if (state !== 0 && state !== 1 && state !== 2 && state !== "missing") continue;
+    if (!states.includes(state)) states.push(state);
+  }
+  return states;
+}
+
+function normalizeSnpFilters(value: unknown): SnpFilter[] {
+  if (!Array.isArray(value)) return [];
+  const filters: SnpFilter[] = [];
+  for (const item of value) {
+    const object = asObject(item);
+    const snpId = asString(object?.snpId).trim();
+    const copyStates = normalizeSnpCopyStates(object?.copyStates);
+    if (!snpId || !copyStates.length) continue;
+    filters.push({
+      snpId,
+      alleleRole: normalizeSnpAlleleRole(object?.alleleRole),
+      copyStates
+    });
+  }
+  return filters.slice(0, 12);
+}
+
+function normalizeSnpColor(value: unknown): SnpColorSpec | null {
+  const object = asObject(value);
+  const snpId = asString(object?.snpId).trim();
+  if (!snpId) return null;
+  return {
+    snpId,
+    alleleRole: normalizeSnpAlleleRole(object?.alleleRole)
+  };
 }
 
 function normalizePeriods(value: unknown): PeriodOption[] | undefined {
@@ -275,6 +321,8 @@ export function normalizeProfileView(raw: unknown, schema: ProfileSchema, option
     timeMode: object.timeMode === "bp" ? "bp" : "calendar",
     periods: normalizePeriods(object.periods),
     admixtureRunId: asNumber(object.admixtureRunId),
+    snpFilters: normalizeSnpFilters(object.snpFilters),
+    snpColor: normalizeSnpColor(object.snpColor),
     pageSize: asNumber(object.pageSize) ?? undefined,
     map: {
       baseStyle: asString(mapObject?.baseStyle, undefined as unknown as string),
@@ -287,7 +335,9 @@ export function normalizeProfileView(raw: unknown, schema: ProfileSchema, option
       showCentroids: asBoolean(mapObject?.showCentroids),
       showLegend: asBoolean(mapObject?.showLegend),
       fadeLegend: asBoolean(mapObject?.fadeLegend),
-      projectionMode: asString(mapObject?.projectionMode, undefined as unknown as string)
+      projectionMode: asString(mapObject?.projectionMode, undefined as unknown as string),
+      snpPalette: asString(mapObject?.snpPalette, undefined as unknown as string),
+      includeSnpZeroCopies: asBoolean(mapObject?.includeSnpZeroCopies)
     },
     panel: {
       rightWidth: asNumber(panelObject?.rightWidth) ?? undefined,

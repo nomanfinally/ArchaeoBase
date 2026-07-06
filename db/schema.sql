@@ -341,3 +341,67 @@ CREATE TABLE IF NOT EXISTS map_legend_cache (
 ALTER TABLE map_legend_cache ADD COLUMN IF NOT EXISTS segments JSONB;
 
 CREATE INDEX IF NOT EXISTS map_legend_cache_lookup_idx ON map_legend_cache (release_id, color_mode, color_field, theme, sort_order);
+
+CREATE TABLE IF NOT EXISTS genotype_datasets (
+  id BIGSERIAL PRIMARY KEY,
+  release_id BIGINT NOT NULL REFERENCES aadr_releases(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  source_geno_file TEXT NOT NULL,
+  source_snp_file TEXT NOT NULL,
+  source_ind_file TEXT NOT NULL,
+  sample_count INTEGER NOT NULL CHECK (sample_count > 0),
+  variant_count INTEGER NOT NULL CHECK (variant_count > 0),
+  row_bytes INTEGER NOT NULL CHECK (row_bytes >= 48),
+  header_sample_hash TEXT,
+  header_variant_hash TEXT,
+  imported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (release_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS genotype_dataset_samples (
+  dataset_id BIGINT NOT NULL REFERENCES genotype_datasets(id) ON DELETE CASCADE,
+  sample_index INTEGER NOT NULL CHECK (sample_index >= 1),
+  sample_id BIGINT NOT NULL REFERENCES samples(id) ON DELETE CASCADE,
+  genetic_id TEXT NOT NULL,
+  sex TEXT,
+  group_label TEXT,
+  PRIMARY KEY (dataset_id, sample_index),
+  UNIQUE (dataset_id, sample_id)
+);
+
+CREATE TABLE IF NOT EXISTS genotype_variants (
+  id BIGSERIAL PRIMARY KEY,
+  dataset_id BIGINT NOT NULL REFERENCES genotype_datasets(id) ON DELETE CASCADE,
+  variant_index INTEGER NOT NULL CHECK (variant_index >= 1),
+  snp_id TEXT NOT NULL,
+  chromosome TEXT NOT NULL,
+  genetic_position DOUBLE PRECISION,
+  physical_position BIGINT,
+  ref_allele TEXT,
+  alt_allele TEXT,
+  UNIQUE (dataset_id, variant_index)
+);
+
+CREATE TABLE IF NOT EXISTS genotype_variant_calls (
+  variant_id BIGINT NOT NULL REFERENCES genotype_variants(id) ON DELETE CASCADE,
+  sample_id BIGINT NOT NULL REFERENCES samples(id) ON DELETE CASCADE,
+  call_code SMALLINT NOT NULL CHECK (call_code >= 0 AND call_code <= 3),
+  ref_count SMALLINT CHECK (ref_count >= 0 AND ref_count <= 2),
+  alt_count SMALLINT CHECK (alt_count >= 0 AND alt_count <= 2),
+  is_missing BOOLEAN NOT NULL DEFAULT false,
+  PRIMARY KEY (variant_id, sample_id),
+  CHECK (
+    (is_missing IS TRUE AND ref_count IS NULL AND alt_count IS NULL)
+    OR
+    (is_missing IS FALSE AND ref_count IS NOT NULL AND alt_count IS NOT NULL)
+  )
+);
+
+CREATE INDEX IF NOT EXISTS genotype_datasets_release_idx ON genotype_datasets (release_id, imported_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS genotype_dataset_samples_sample_idx ON genotype_dataset_samples (sample_id);
+CREATE INDEX IF NOT EXISTS genotype_variants_dataset_snp_idx ON genotype_variants (dataset_id, snp_id);
+CREATE INDEX IF NOT EXISTS genotype_variants_snp_lower_pattern_idx ON genotype_variants ((lower(snp_id)) text_pattern_ops);
+CREATE INDEX IF NOT EXISTS genotype_variants_position_idx ON genotype_variants (dataset_id, chromosome, physical_position);
+CREATE INDEX IF NOT EXISTS genotype_variant_calls_sample_idx ON genotype_variant_calls (sample_id);
+CREATE INDEX IF NOT EXISTS genotype_variant_calls_alt_idx ON genotype_variant_calls (variant_id, alt_count, sample_id);
+CREATE INDEX IF NOT EXISTS genotype_variant_calls_ref_idx ON genotype_variant_calls (variant_id, ref_count, sample_id);

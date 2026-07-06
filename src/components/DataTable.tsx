@@ -233,7 +233,7 @@ export function DataTable({
                 suppressHydrationWarning
                 draggable={columnId !== "admixture"}
                 onDragStart={(event) => {
-                  if (!event.altKey || columnId === "admixture") {
+                  if (columnId === "admixture") {
                     event.preventDefault();
                     return;
                   }
@@ -261,7 +261,7 @@ export function DataTable({
                   type="button"
                   onClick={header.column.getToggleSortingHandler()}
                   disabled={!header.column.getCanSort()}
-                  title={header.column.getCanSort() ? "Sort column. Alt-drag the header to reorder." : "Alt-drag the header to reorder."}
+                  title={header.column.getCanSort() ? "Sort column. Drag the header to reorder." : "Drag the header to reorder."}
                 >
                   <span>{flexRender(header.column.columnDef.header, header.getContext())}</span>
                   {sorted === "asc" ? <ArrowUp size={13} /> : sorted === "desc" ? <ArrowDown size={13} /> : <ChevronsUpDown size={13} />}

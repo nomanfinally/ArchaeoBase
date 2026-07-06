@@ -24,6 +24,19 @@ const filterNodeSchema: z.ZodTypeAny = z.lazy(() =>
   ])
 );
 
+const snpCopyStateSchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal("missing")]);
+
+const snpFilterSchema = z.object({
+  snpId: z.string().min(1),
+  alleleRole: z.union([z.literal("ref"), z.literal("alt")]).default("alt"),
+  copyStates: z.array(snpCopyStateSchema).default([1, 2])
+});
+
+const snpColorSchema = z.object({
+  snpId: z.string().min(1),
+  alleleRole: z.union([z.literal("ref"), z.literal("alt")]).default("alt")
+});
+
 const requestSchema = z.object({
   entity: z.union([z.literal("sample"), z.literal("group")]).default("sample"),
   view: z.union([z.literal("table"), z.literal("map")]).default("table"),
@@ -49,7 +62,9 @@ const requestSchema = z.object({
       north: z.number()
     })
     .nullish(),
-  admixtureRunId: z.number().int().positive().nullish()
+  admixtureRunId: z.number().int().positive().nullish(),
+  snpFilters: z.array(snpFilterSchema).optional(),
+  snpColor: snpColorSchema.nullish()
 });
 
 export async function POST(request: Request) {

@@ -2117,17 +2117,49 @@ button:disabled {
 .map-canvas {
   position: absolute;
   inset: 0;
+  z-index: 1;
 }
 
 .map-projection-globe {
-  background: #160d26;
+  background:
+    radial-gradient(ellipse at 50% 55%, rgba(104, 124, 168, 0.16), rgba(2, 5, 13, 0) 58%),
+    radial-gradient(ellipse at 30% 38%, rgba(182, 198, 231, 0.1), rgba(2, 5, 13, 0) 46%),
+    linear-gradient(135deg, #02050d 0%, #050714 42%, #090717 66%, #01030a 100%);
+}
+
+.map-projection-globe::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 11% 17%, rgba(255, 255, 255, 0.82) 0 0.8px, transparent 1.2px),
+    radial-gradient(circle at 72% 26%, rgba(218, 229, 255, 0.72) 0 0.7px, transparent 1.1px),
+    radial-gradient(circle at 38% 68%, rgba(255, 255, 255, 0.62) 0 0.7px, transparent 1.1px),
+    radial-gradient(circle at 86% 78%, rgba(198, 215, 255, 0.55) 0 0.6px, transparent 1px),
+    radial-gradient(circle at 50% 50%, rgba(142, 166, 214, 0.08), rgba(2, 5, 13, 0) 52%);
+  background-size:
+    180px 140px,
+    260px 220px,
+    340px 270px,
+    460px 360px,
+    100% 100%;
+  opacity: 0.86;
 }
 
 .map-projection-globe.map-base-dark .map-canvas,
 .map-projection-globe.map-base-dark .maplibregl-canvas,
 .map-projection-globe.map-base-satellite .map-canvas,
 .map-projection-globe.map-base-satellite .maplibregl-canvas {
-  background: #160d26;
+  background: transparent;
+}
+
+.map-projection-globe.map-base-light .map-canvas,
+.map-projection-globe.map-base-light .maplibregl-canvas,
+.map-projection-globe.map-base-streets .map-canvas,
+.map-projection-globe.map-base-streets .maplibregl-canvas {
+  background: transparent;
 }
 
 .map-status {

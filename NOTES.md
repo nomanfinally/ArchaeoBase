@@ -12,6 +12,7 @@
 
 - Haplogroup non-data states are distinct categories, not collapsed into a single `Unknown`. Examples include `No Y-DNA (female)`, `Y-DNA n/a (sex unknown)`, and `mtDNA n/a (<2x)`.
 - Popups should show Y-DNA and mtDNA rows even when values are unavailable. The value should be explicit, such as `n/a (female)` or `n/a (<2x)`, so absence of data is not confused with omission by the UI.
+- Table cells render unavailable values such as `n/a (female)`, `n/a (<2x)`, `unknown`, and `not reported` as pale italic text. This is display-only styling and does not change query, filter, or export values.
 - `Age BP` is the ordinary continuous age scale and should remain available unchanged.
 - `Age BP (split)` is a separate cached spectrum. It uses four meaningful horizontal segments: Paleolithic-Mesolithic, Neolithic-Chalcolithic, Bronze Age, and Iron Age-Modern. The normal `Age BP` gradient remains unchanged.
 - Bronze Age now has EBA, MBA, MLBA, and LBA period labels for sample metadata, but the split-age spectrum keeps Bronze Age as one purple-to-red bar with small outside subperiod labels.

@@ -2204,6 +2204,12 @@ button:disabled {
   color: #252521;
 }
 
+.td .unavailable-value {
+  color: #a9a49a;
+  font-style: italic;
+  font-weight: 400;
+}
+
 .td.mono,
 .mono {
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;

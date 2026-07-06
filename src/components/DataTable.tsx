@@ -37,6 +37,30 @@ function formatValue(value: unknown) {
   return String(value);
 }
 
+function normalizeUnavailableText(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function isUnavailableToken(value: string) {
+  const text = normalizeUnavailableText(value);
+  if (!text || text === "..") return true;
+  if (/^(?:n\s*\/\s*a|n\.?\s*a\.?|na)(?:\s*\([^)]*\))?$/.test(text)) return true;
+  if (/^(?:unknown|unk|none|null|missing|unavailable|undetermined)$/.test(text)) return true;
+  if (/^(?:not\s+(?:reported|determined|available|applicable)|no\s+(?:data|call|result)|low\s+coverage|insufficient\s+coverage)$/.test(text)) {
+    return true;
+  }
+  if (/^no\s+(?:y[-\s]?dna|mt[-\s]?dna|mtdna)(?:\s*\([^)]*\))?$/.test(text)) return true;
+  if (/^[.?-]+$/.test(text)) return true;
+  return false;
+}
+
+function isUnavailableValue(value: unknown) {
+  const text = formatValue(value);
+  if (isUnavailableToken(text)) return true;
+  const parts = text.split(/\s*[,;|]\s*/).filter(Boolean);
+  return parts.length > 1 && parts.every(isUnavailableToken);
+}
+
 const DEFAULT_COLUMN_WIDTH = 150;
 const MIN_COLUMN_WIDTH = 92;
 const MAX_COLUMN_WIDTH = 520;
@@ -142,8 +166,14 @@ export function DataTable({
       header: field.label,
       enableSorting: field.sortable !== false,
       cell: ({ getValue }) => {
-        const className = field.id.includes("id") || field.id === "group_id" ? "mono" : "";
-        return <span className={className}>{formatValue(getValue())}</span>;
+        const value = getValue();
+        const className = [
+          field.id.includes("id") || field.id === "group_id" ? "mono" : "",
+          isUnavailableValue(value) ? "unavailable-value" : ""
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return <span className={className}>{formatValue(value)}</span>;
       }
     })) satisfies ColumnDef<Record<string, unknown>>[];
 

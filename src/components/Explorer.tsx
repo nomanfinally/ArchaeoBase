@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SortingState } from "@tanstack/react-table";
 import { AlertCircle, ArrowUpDown, Columns3, Copy, Download, Edit3, Filter, GripVertical, Map as MapIcon, Plus, RefreshCw, Search, Settings2, Table2, Trash2, Upload, X } from "lucide-react";
+import { aggregateUniqueGroupRows, UNIQUE_GROUP_EXPORT_COLUMNS } from "@/lib/export/group-aggregation";
 import type { FilterNode, SortSpec } from "@/lib/filters/types";
 import type { MapQueryResponse } from "@/lib/map/types";
 import {
@@ -43,6 +44,8 @@ import {
 type Entity = "sample" | "group";
 type ViewMode = "table" | "map";
 type PanelMode = "filters" | "sort" | "columns" | "settings" | null;
+type ExportColumnId = string;
+type ExportMode = "rows" | "unique_groups";
 
 type SchemaResponse = {
   sampleFields: FieldDefinition[];
@@ -242,6 +245,12 @@ export function Explorer() {
   const [propertyDropTarget, setPropertyDropTarget] = useState<{ id: string; position: "before" | "after" } | null>(null);
   const [draggedSortIndex, setDraggedSortIndex] = useState<number | null>(null);
   const [sortDropTarget, setSortDropTarget] = useState<{ index: number; position: "before" | "after" } | null>(null);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportMode, setExportMode] = useState<ExportMode>("rows");
+  const [exportColumnOrder, setExportColumnOrder] = useState<ExportColumnId[]>([]);
+  const [exportSelectedColumns, setExportSelectedColumns] = useState<ExportColumnId[]>([]);
+  const [draggedExportColumn, setDraggedExportColumn] = useState<ExportColumnId | null>(null);
+  const [exportDropTarget, setExportDropTarget] = useState<{ id: ExportColumnId; position: "before" | "after" } | null>(null);
   const profileImportRef = useRef<HTMLInputElement | null>(null);
   const panelResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const tableQueryCacheRef = useRef(new Map<string, { rows: Record<string, unknown>[]; total: number; releaseName: string | null }>());
@@ -438,6 +447,17 @@ export function Explorer() {
     () => orderFieldsByColumnIds(allFields, visibleColumns[entity] ?? []),
     [allFields, visibleColumns, entity]
   );
+  const fieldById = useMemo(() => new Map(allFields.map((field) => [field.id, field])), [allFields]);
+  const exportableColumnLabels = useMemo(() => {
+    const labels = new Map<ExportColumnId, string>();
+    if (exportMode === "unique_groups") {
+      UNIQUE_GROUP_EXPORT_COLUMNS.forEach((column) => labels.set(column.id, column.label));
+      return labels;
+    }
+    allFields.forEach((field) => labels.set(field.id, field.label));
+    if (admixtureRunId !== null) labels.set("admixture", "ADMIXTURE");
+    return labels;
+  }, [allFields, admixtureRunId, exportMode]);
 
   const displayedRows = useMemo(() => normalizeRows(rows, entity), [rows, entity]);
   const pages = Math.max(1, Math.ceil(total / pageSize));
@@ -549,6 +569,66 @@ export function Explorer() {
     const rect = event.currentTarget.getBoundingClientRect();
     const position = event.clientY > rect.top + rect.height / 2 ? "after" : "before";
     setPropertyDropTarget({ id: fieldId, position });
+  }
+
+  function rowExportColumnOrder() {
+    const knownFieldIds = allFields.map((field) => field.id);
+    const visible = (visibleColumns[entity] ?? []).filter((fieldId) => fieldById.has(fieldId));
+    const hidden = knownFieldIds.filter((fieldId) => !visible.includes(fieldId));
+    return [...visible, ...hidden, ...(admixtureRunId !== null ? ["admixture"] : [])];
+  }
+
+  function openExportDialog() {
+    const order = rowExportColumnOrder();
+    const selected = (visibleColumns[entity] ?? []).filter((fieldId) => fieldById.has(fieldId));
+    setExportMode("rows");
+    setExportColumnOrder(order);
+    setExportSelectedColumns([...selected, ...(admixtureRunId !== null ? ["admixture"] : [])]);
+    setExportDialogOpen(true);
+    setDraggedExportColumn(null);
+    setExportDropTarget(null);
+  }
+
+  function switchExportMode(mode: ExportMode) {
+    setExportMode(mode);
+    setDraggedExportColumn(null);
+    setExportDropTarget(null);
+    if (mode === "unique_groups") {
+      const order = UNIQUE_GROUP_EXPORT_COLUMNS.map((column) => column.id);
+      setExportColumnOrder(order);
+      setExportSelectedColumns(order);
+      return;
+    }
+    const order = rowExportColumnOrder();
+    const selected = (visibleColumns[entity] ?? []).filter((fieldId) => fieldById.has(fieldId));
+    setExportColumnOrder(order);
+    setExportSelectedColumns([...selected, ...(admixtureRunId !== null ? ["admixture"] : [])]);
+  }
+
+  function toggleExportColumn(columnId: ExportColumnId) {
+    setExportSelectedColumns((current) => (
+      current.includes(columnId)
+        ? current.filter((id) => id !== columnId)
+        : [...current, columnId]
+    ));
+  }
+
+  function updateExportDropTarget(event: React.DragEvent<HTMLElement>, columnId: ExportColumnId) {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position = event.clientY > rect.top + rect.height / 2 ? "after" : "before";
+    setExportDropTarget({ id: columnId, position });
+  }
+
+  function reorderExportColumn(draggedId: ExportColumnId, targetId: ExportColumnId, position: "before" | "after") {
+    if (draggedId === targetId) return;
+    setExportColumnOrder((current) => {
+      if (!current.includes(draggedId) || !current.includes(targetId)) return current;
+      const withoutDragged = current.filter((id) => id !== draggedId);
+      const targetIndex = withoutDragged.indexOf(targetId);
+      const insertIndex = position === "after" ? targetIndex + 1 : targetIndex;
+      return [...withoutDragged.slice(0, insertIndex), draggedId, ...withoutDragged.slice(insertIndex)];
+    });
   }
 
   function resetFilters() {
@@ -735,11 +815,30 @@ export function Explorer() {
     window.URL.revokeObjectURL(url);
   }
 
-  async function exportCurrentTableCsv() {
-    const exportFields = [...activeFields];
-    const includeAdmixture = admixtureRunId !== null;
-    const headers = [...exportFields.map((field) => field.label), ...(includeAdmixture ? ["ADMIXTURE"] : [])];
-    const sort = sortingToSortSpecs(sorting);
+  async function exportCurrentTableCsv(columnIds: ExportColumnId[], mode: ExportMode) {
+    const exportColumns = columnIds
+      .map((columnId) => {
+        if (mode === "unique_groups") {
+          const column = UNIQUE_GROUP_EXPORT_COLUMNS.find((candidate) => candidate.id === columnId);
+          return column ? { id: column.id, label: column.label } : null;
+        }
+        if (columnId === "admixture" && admixtureRunId !== null) return { id: columnId, label: "ADMIXTURE" };
+        const field = fieldById.get(columnId);
+        return field ? { id: field.id, label: field.label } : null;
+      })
+      .filter((column): column is { id: ExportColumnId; label: string } => Boolean(column));
+    if (!exportColumns.length) {
+      window.alert("Select at least one column to export.");
+      return false;
+    }
+
+    const headers = exportColumns.map((column) => column.label);
+    const sort = mode === "unique_groups" && entity !== "sample" ? [{ field: "group_id", direction: "asc" as const }] : sortingToSortSpecs(sorting);
+    const requestEntity: Entity = mode === "unique_groups" ? "sample" : entity;
+    const requestAdmixtureRunId = mode === "unique_groups" ? null : admixtureRunId;
+    const requestSearchField = mode === "unique_groups" && searchField !== "all" && !schema?.sampleFields.some((field) => field.id === searchField)
+      ? "all"
+      : searchField;
     const exportFilter = combineWithTimeWindow(filter, timeWindow);
     const exportedRows: Record<string, unknown>[] = [];
     setCsvExporting(true);
@@ -749,37 +848,37 @@ export function Explorer() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            entity,
+            entity: requestEntity,
             view: "table",
             filter: exportFilter,
             globalSearch,
-            searchField,
+            searchField: requestSearchField,
             sort,
             page: exportPage,
             pageSize: CSV_EXPORT_PAGE_SIZE,
-            admixtureRunId,
+            admixtureRunId: requestAdmixtureRunId,
             mapBounds: null
           })
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error ?? "CSV export failed");
-        const nextRows = normalizeRows(data.rows ?? [], entity);
+        const nextRows = normalizeRows(data.rows ?? [], requestEntity);
         exportedRows.push(...nextRows);
         const nextTotal = Number(data.total ?? exportedRows.length);
         if (!nextRows.length || exportedRows.length >= nextTotal) break;
       }
     } catch (exportError) {
       window.alert(exportError instanceof Error ? exportError.message : "CSV export failed.");
-      return;
+      return false;
     } finally {
       setCsvExporting(false);
     }
 
+    const rowsForCsv = mode === "unique_groups" ? aggregateUniqueGroupRows(exportedRows) : exportedRows;
     const lines = [
       headers.map(csvValue).join(","),
-      ...exportedRows.map((row) => [
-        ...exportFields.map((field) => csvValue(row[field.id])),
-        ...(includeAdmixture ? [csvValue(row.admixture)] : [])
+      ...rowsForCsv.map((row) => [
+        ...exportColumns.map((column) => csvValue(row[column.id]))
       ].join(","))
     ];
     const blob = new Blob([`${lines.join("\n")}\n`], { type: "text/csv;charset=utf-8" });
@@ -787,9 +886,10 @@ export function Explorer() {
     const link = document.createElement("a");
     const date = new Date().toISOString().slice(0, 10);
     link.href = url;
-    link.download = `archaebase_${entity}_table_${date}.csv`;
+    link.download = mode === "unique_groups" ? `archaebase_unique_groups_${date}.csv` : `archaebase_${entity}_table_${date}.csv`;
     link.click();
     window.URL.revokeObjectURL(url);
+    return true;
   }
 
   function startPanelResize(event: React.PointerEvent) {
@@ -1079,6 +1179,18 @@ export function Explorer() {
           ))}
         </select>
 
+        {viewMode === "table" ? (
+          <button
+            className="button icon-label toolbar-action toolbar-export-action"
+            type="button"
+            onClick={openExportDialog}
+            disabled={csvExporting}
+            title="Export CSV"
+          >
+            <Download size={15} />
+            <span className="toolbar-label">{csvExporting ? "Exporting" : "Export CSV"}</span>
+          </button>
+        ) : null}
       </div>
 
       {mapFullViewActive ? (
@@ -1320,7 +1432,7 @@ export function Explorer() {
                   <div className="settings-block">
                     <span className="settings-title">Table</span>
                     <label className="settings-row">
-                      <span>Page Size</span>
+                      <span>Rows per page</span>
                       <select
                         className="select"
                         value={pageSize}
@@ -1335,10 +1447,6 @@ export function Explorer() {
                         <option value={500}>500</option>
                       </select>
                     </label>
-                    <button className="button settings-wide-button" type="button" onClick={() => void exportCurrentTableCsv()} disabled={csvExporting}>
-                      <Download size={14} />
-                      {csvExporting ? "Exporting all rows" : "Export all rows CSV"}
-                    </button>
                   </div>
                 ) : (
                   <>
@@ -1593,6 +1701,146 @@ export function Explorer() {
           ) : null}
         </main>
       </div>
+
+      {exportDialogOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <section className="export-dialog" role="dialog" aria-modal="true" aria-label="Export CSV">
+            <div className="export-dialog-header">
+              <span>Export CSV</span>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={() => {
+                  setExportDialogOpen(false);
+                  setDraggedExportColumn(null);
+                  setExportDropTarget(null);
+                }}
+                aria-label="Close export"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="export-mode-row">
+              <span>Mode</span>
+              <div className="settings-segmented compact">
+                <button
+                  className={exportMode === "rows" ? "active" : ""}
+                  type="button"
+                  onClick={() => switchExportMode("rows")}
+                >
+                  Rows
+                </button>
+                <button
+                  className={exportMode === "unique_groups" ? "active" : ""}
+                  type="button"
+                  onClick={() => switchExportMode("unique_groups")}
+                >
+                  Unique group IDs
+                </button>
+              </div>
+            </div>
+
+            <div className="export-dialog-actions">
+              <button
+                className="button"
+                type="button"
+                onClick={() => setExportSelectedColumns(exportMode === "unique_groups"
+                  ? UNIQUE_GROUP_EXPORT_COLUMNS.map((column) => column.id)
+                  : [
+                      ...(visibleColumns[entity] ?? []).filter((fieldId) => fieldById.has(fieldId)),
+                      ...(admixtureRunId !== null ? ["admixture"] : [])
+                    ])}
+              >
+                {exportMode === "unique_groups" ? "Default Columns" : "Screen Columns"}
+              </button>
+              <button className="button" type="button" onClick={() => setExportSelectedColumns([...exportColumnOrder])}>
+                All Columns
+              </button>
+              <button className="button" type="button" onClick={() => setExportSelectedColumns([])}>
+                Clear
+              </button>
+            </div>
+
+            <div className="export-column-list">
+              {exportColumnOrder.map((columnId) => (
+                <label
+                  className={[
+                    "export-column-row",
+                    draggedExportColumn === columnId ? "dragging" : "",
+                    exportDropTarget?.id === columnId ? `drop-${exportDropTarget.position}` : ""
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  key={columnId}
+                  draggable
+                  onDragStart={(event) => {
+                    setDraggedExportColumn(columnId);
+                    setExportDropTarget(null);
+                    event.dataTransfer.setData("text/plain", columnId);
+                    event.dataTransfer.effectAllowed = "move";
+                  }}
+                  onDragOver={(event) => updateExportDropTarget(event, columnId)}
+                  onDragEnter={(event) => updateExportDropTarget(event, columnId)}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    const draggedId = event.dataTransfer.getData("text/plain") || draggedExportColumn;
+                    const position = exportDropTarget?.id === columnId ? exportDropTarget.position : "before";
+                    if (draggedId) reorderExportColumn(draggedId, columnId, position);
+                    setDraggedExportColumn(null);
+                    setExportDropTarget(null);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedExportColumn(null);
+                    setExportDropTarget(null);
+                  }}
+                >
+                  <span className="drag-handle" title="Drag export column">
+                    <GripVertical size={14} />
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={exportSelectedColumns.includes(columnId)}
+                    onChange={() => toggleExportColumn(columnId)}
+                  />
+                  <span>{exportableColumnLabels.get(columnId) ?? columnId}</span>
+                </label>
+              ))}
+            </div>
+
+            <div className="export-dialog-footer">
+              <button
+                className="button"
+                type="button"
+                onClick={() => {
+                  setExportDialogOpen(false);
+                  setDraggedExportColumn(null);
+                  setExportDropTarget(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="button primary"
+                type="button"
+                disabled={csvExporting || !exportSelectedColumns.length}
+                onClick={async () => {
+                  const selectedInOrder = exportColumnOrder.filter((columnId) => exportSelectedColumns.includes(columnId));
+                  const exported = await exportCurrentTableCsv(selectedInOrder, exportMode);
+                  if (exported) {
+                    setExportDialogOpen(false);
+                    setDraggedExportColumn(null);
+                    setExportDropTarget(null);
+                  }
+                }}
+              >
+                <Download size={14} />
+                {csvExporting ? "Exporting" : "Export"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

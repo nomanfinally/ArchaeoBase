@@ -20,7 +20,6 @@
 - Population-cluster styling uses a capped palette of 12 colors. The cache still assigns nearby groups divergent colors when possible, but the legend is aggregated by color class instead of listing every group ID.
 - Absent Y-DNA and mtDNA states use only black/grey shades. Labels can still distinguish female, low coverage, unknown, and not reported states, but absence itself should not be encoded with bright sex or haplogroup colors.
 - Map legend fading is a user setting. Full-map mode is transient UI state and is not saved to profiles.
-- Globe projection uses a static CSS space backdrop behind the MapLibre canvas. The map style background is transparent only in globe mode, avoiding animated sky layers, downloaded background images, and extra runtime memory pressure.
 
 ## Regions And View State
 

@@ -115,23 +115,14 @@ function projectionType(projectionMode: MapProjectionMode) {
   return projectionMode === "globe" ? "globe" : "mercator";
 }
 
-function styleBackgroundColor(baseStyle: MapBaseStyle, projectionMode: MapProjectionMode) {
-  if (projectionMode === "globe") return "rgba(0, 0, 0, 0)";
-  if (baseStyle === "dark") return "#15171b";
-  if (baseStyle === "streets") return "#f4f0e5";
-  if (baseStyle === "satellite") return "#1f252c";
-  return "#f4f4f1";
-}
-
 function mapStyleDefinition(baseStyle: MapBaseStyle, projectionMode: MapProjectionMode = "flat"): StyleSpecification {
-  const backgroundColor = styleBackgroundColor(baseStyle, projectionMode);
   const styles: Record<MapBaseStyle, { sources: StyleSpecification["sources"]; layers: StyleSpecification["layers"] }> = {
     light: {
       sources: {
         basemap: rasterSource("World_Topo_Map")
       },
       layers: [
-        { id: "background", type: "background", paint: { "background-color": backgroundColor } },
+        { id: "background", type: "background", paint: { "background-color": "#f4f4f1" } },
         { id: "basemap", type: "raster", source: "basemap" }
       ]
     },
@@ -141,7 +132,7 @@ function mapStyleDefinition(baseStyle: MapBaseStyle, projectionMode: MapProjecti
         reference: rasterSource("Canvas/World_Dark_Gray_Reference")
       },
       layers: [
-        { id: "background", type: "background", paint: { "background-color": backgroundColor } },
+        { id: "background", type: "background", paint: { "background-color": "#15171b" } },
         { id: "basemap", type: "raster", source: "basemap" },
         { id: "reference", type: "raster", source: "reference" }
       ]
@@ -151,7 +142,7 @@ function mapStyleDefinition(baseStyle: MapBaseStyle, projectionMode: MapProjecti
         basemap: rasterSource("World_Street_Map")
       },
       layers: [
-        { id: "background", type: "background", paint: { "background-color": backgroundColor } },
+        { id: "background", type: "background", paint: { "background-color": "#f4f0e5" } },
         { id: "basemap", type: "raster", source: "basemap" }
       ]
     },
@@ -161,7 +152,7 @@ function mapStyleDefinition(baseStyle: MapBaseStyle, projectionMode: MapProjecti
         reference: rasterSource("Reference/World_Boundaries_and_Places")
       },
       layers: [
-        { id: "background", type: "background", paint: { "background-color": backgroundColor } },
+        { id: "background", type: "background", paint: { "background-color": "#1f252c" } },
         { id: "basemap", type: "raster", source: "basemap" },
         { id: "reference", type: "raster", source: "reference" }
       ]

@@ -2,14 +2,16 @@ import { getLatestReleaseId, getPool } from "@/lib/db";
 import { compileGlobalSearch, compileMapBounds, compileSampleFilter, mergeWhere } from "@/lib/filters/compile";
 import type { QueryRequest, SortSpec, SqlFragment } from "@/lib/filters/types";
 import {
+  buildSnpColumnJoinSql,
   buildSnpFilterSql,
+  prepareSnpColumns,
   prepareSnpFilters,
   snpColumnDefinitions,
   snpGroupAggregateColumns,
   snpGroupSelectColumns,
   snpSelectColumns,
   snpSortExpression,
-  type PreparedSnpFilter
+  type PreparedSnpColumn
 } from "@/lib/genotypes/db";
 import { buildPeriodLabelSql, buildPeriodSortSql } from "@/lib/periods";
 import { groupFieldById, sampleFieldById, sampleFields } from "@/lib/schema/fields";
@@ -67,7 +69,7 @@ function buildSampleWhere(request: QueryRequest, releaseId: string, requireCoord
   return mergeWhere([releaseFilter, filter, globalSearch, mapBounds, coordinateFilter]);
 }
 
-function buildOrderBy(sort: SortSpec[] | undefined, entity: QueryRequest["entity"], snpFilters: PreparedSnpFilter[] = []) {
+function buildOrderBy(sort: SortSpec[] | undefined, entity: QueryRequest["entity"], snpColumns: PreparedSnpColumn[] = []) {
   const fallback = entity === "sample" ? "s.genetic_id ASC" : "g.group_id ASC";
   if (!sort?.length) return fallback;
 
@@ -75,7 +77,7 @@ function buildOrderBy(sort: SortSpec[] | undefined, entity: QueryRequest["entity
     .slice(0, MAX_SORT_RULES)
     .map((spec) => {
       const direction = spec.direction === "desc" ? "DESC" : "ASC";
-      const snpExpression = snpSortExpression(spec.field, snpFilters, entity);
+      const snpExpression = snpSortExpression(spec.field, snpColumns, entity);
       if (snpExpression) return `${snpExpression} ${direction} NULLS LAST`;
       const field = entity === "sample" ? sampleFieldById[spec.field] : groupFieldById[spec.field];
       const column = entity === "sample" ? field?.sampleColumn : field?.groupColumn;
@@ -116,10 +118,12 @@ async function querySamples(request: QueryRequest) {
   const snpSql = buildSnpFilterSql(snpFilters, where.params.length);
   const sampleWhereText = appendSnpWhere(where.text, snpSql.whereText);
   const baseParams = [...where.params, ...snpSql.params];
-  const orderBy = request.view === "map" && !request.sort?.length ? "s.id ASC" : buildOrderBy(request.sort, "sample", snpFilters);
+  const snpColumns = request.view === "map" ? [] : await prepareSnpColumns(pool, release.id, request.snpColumns, snpFilters);
+  const snpColumnSql = request.view === "map" ? { joins: "", params: [] as unknown[] } : buildSnpColumnJoinSql(snpColumns, baseParams.length);
+  const orderBy = request.view === "map" && !request.sort?.length ? "s.id ASC" : buildOrderBy(request.sort, "sample", snpColumns);
   const admixtureRunId = parseAdmixtureRunId(request.admixtureRunId);
 
-  const selectParams = [...baseParams];
+  const selectParams = [...baseParams, ...snpColumnSql.params];
   const admixtureSelect = request.view !== "map" && admixtureRunId
     ? `, (
         SELECT jsonb_object_agg(av.component_index, av.fraction ORDER BY av.component_index)
@@ -129,7 +133,7 @@ async function querySamples(request: QueryRequest) {
     : request.view === "map"
       ? ""
       : ", NULL::jsonb AS admixture";
-  const selectColumns = request.view === "map" ? SAMPLE_MAP_SELECT_COLUMNS : [...SAMPLE_SELECT_COLUMNS, ...snpSelectColumns(snpFilters)];
+  const selectColumns = request.view === "map" ? SAMPLE_MAP_SELECT_COLUMNS : [...SAMPLE_SELECT_COLUMNS, ...snpSelectColumns(snpColumns)];
 
   const query = addLimitOffset(
     `
@@ -137,6 +141,7 @@ async function querySamples(request: QueryRequest) {
       ${admixtureSelect}
       FROM samples s
       ${snpSql.joins}
+      ${snpColumnSql.joins}
       WHERE ${sampleWhereText}
       ORDER BY ${orderBy}
     `,
@@ -162,7 +167,7 @@ async function querySamples(request: QueryRequest) {
     page,
     pageSize,
     total: count.rows[0]?.total ?? 0,
-    snpColumns: snpColumnDefinitions(snpFilters),
+    snpColumns: snpColumnDefinitions(snpColumns),
     rows: rows.rows
   };
 }
@@ -177,10 +182,12 @@ async function queryGroups(request: QueryRequest) {
   const snpSql = buildSnpFilterSql(snpFilters, where.params.length);
   const sampleWhereText = appendSnpWhere(where.text, snpSql.whereText);
   const baseParams = [...where.params, ...snpSql.params];
-  const orderBy = buildOrderBy(request.sort, "group", snpFilters);
+  const snpColumns = await prepareSnpColumns(pool, release.id, request.snpColumns, snpFilters);
+  const snpColumnSql = buildSnpColumnJoinSql(snpColumns, baseParams.length);
+  const orderBy = buildOrderBy(request.sort, "group", snpColumns);
   const admixtureRunId = parseAdmixtureRunId(request.admixtureRunId);
 
-  const commonParams = [...baseParams];
+  const commonParams = [...baseParams, ...snpColumnSql.params];
   const admixtureJoin = admixtureRunId
     ? `
       , group_admixture AS (
@@ -204,15 +211,17 @@ async function queryGroups(request: QueryRequest) {
         s.*,
         ${buildPeriodLabelSql("s.date_mean_bp")} AS period_name,
         ${buildPeriodSortSql("s.date_mean_bp")} AS period_sort
-        ${snpFilters.length ? `,\n        ${snpGroupSelectColumns(snpFilters).join(",\n        ")}` : ""}
+        ${snpColumns.length ? `,\n        ${snpGroupSelectColumns(snpColumns).join(",\n        ")}` : ""}
       FROM samples s
       ${snpSql.joins}
+      ${snpColumnSql.joins}
       WHERE ${sampleWhereText}
     ),
     group_rows AS (
       SELECT
         fs.group_id,
         count(*)::integer AS sample_count,
+        string_agg(DISTINCT fs.genetic_id, ', ' ORDER BY fs.genetic_id) AS genetic_ids,
         string_agg(DISTINCT fs.political_entity, ', ' ORDER BY fs.political_entity) AS countries_text,
         array_remove(array_agg(DISTINCT fs.political_entity ORDER BY fs.political_entity), NULL) AS countries,
         string_agg(DISTINCT fs.regions, ', ' ORDER BY fs.regions) AS regions_text,
@@ -248,7 +257,7 @@ async function queryGroups(request: QueryRequest) {
         avg(fs.snp_2m)::double precision AS snp_2m_avg,
         min(fs.snp_1240k) AS snp_1240k_min,
         max(fs.snp_1240k) AS snp_1240k_max
-        ${snpFilters.length ? `,\n        ${snpGroupAggregateColumns(snpFilters).join(",\n        ")}` : ""}
+        ${snpColumns.length ? `,\n        ${snpGroupAggregateColumns(snpColumns).join(",\n        ")}` : ""}
       FROM filtered_samples fs
       WHERE fs.group_id IS NOT NULL
       GROUP BY fs.group_id
@@ -287,7 +296,7 @@ async function queryGroups(request: QueryRequest) {
     page,
     pageSize,
     total: count.rows[0]?.total ?? 0,
-    snpColumns: snpColumnDefinitions(snpFilters),
+    snpColumns: snpColumnDefinitions(snpColumns),
     rows: rows.rows
   };
 }

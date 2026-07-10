@@ -32,6 +32,10 @@ const snpFilterSchema = z.object({
   copyStates: z.array(snpCopyStateSchema).default([1, 2])
 });
 
+const snpColumnSchema = z.object({
+  snpId: z.string().min(1)
+});
+
 const snpColorSchema = z.object({
   snpId: z.string().min(1),
   alleleRole: z.union([z.literal("ref"), z.literal("alt")]).default("alt")
@@ -64,6 +68,7 @@ const requestSchema = z.object({
     .nullish(),
   admixtureRunId: z.number().int().positive().nullish(),
   snpFilters: z.array(snpFilterSchema).optional(),
+  snpColumns: z.array(snpColumnSchema).optional(),
   snpColor: snpColorSchema.nullish()
 });
 

@@ -1,5 +1,5 @@
 import { parse, stringify } from "yaml";
-import type { FilterCondition, FilterNode, SnpAlleleRole, SnpColorSpec, SnpCopyState, SnpFilter, SortDirection, SortSpec } from "@/lib/filters/types";
+import type { FilterCondition, FilterNode, SnpAlleleRole, SnpColorSpec, SnpColumnSpec, SnpCopyState, SnpFilter, SortDirection, SortSpec } from "@/lib/filters/types";
 import type { FieldDefinition, Operator } from "@/lib/schema/fields";
 import type { PeriodOption } from "@/lib/periods";
 
@@ -48,6 +48,7 @@ export type ProfileView = {
   periods?: PeriodOption[];
   admixtureRunId?: number | null;
   snpFilters?: SnpFilter[];
+  snpColumns?: SnpColumnSpec[];
   snpColor?: SnpColorSpec | null;
   pageSize?: number;
   map?: ProfileMapSettings;
@@ -229,6 +230,18 @@ function normalizeSnpFilters(value: unknown): SnpFilter[] {
   return filters.slice(0, 12);
 }
 
+function normalizeSnpColumns(value: unknown): SnpColumnSpec[] {
+  if (!Array.isArray(value)) return [];
+  const columns: SnpColumnSpec[] = [];
+  for (const item of value) {
+    const object = typeof item === "string" ? { snpId: item } : asObject(item);
+    const snpId = asString(object?.snpId).trim();
+    if (!snpId || columns.some((column) => column.snpId.toLowerCase() === snpId.toLowerCase())) continue;
+    columns.push({ snpId });
+  }
+  return columns.slice(0, 24);
+}
+
 function normalizeSnpColor(value: unknown): SnpColorSpec | null {
   const object = asObject(value);
   const snpId = asString(object?.snpId).trim();
@@ -322,6 +335,7 @@ export function normalizeProfileView(raw: unknown, schema: ProfileSchema, option
     periods: normalizePeriods(object.periods),
     admixtureRunId: asNumber(object.admixtureRunId),
     snpFilters: normalizeSnpFilters(object.snpFilters),
+    snpColumns: normalizeSnpColumns(object.snpColumns),
     snpColor: normalizeSnpColor(object.snpColor),
     pageSize: asNumber(object.pageSize) ?? undefined,
     map: {

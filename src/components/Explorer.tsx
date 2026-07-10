@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SortingState } from "@tanstack/react-table";
 import { AlertCircle, ArrowUpDown, Columns3, Copy, Database, Download, Edit3, Filter, GripVertical, Loader2, Map as MapIcon, Plus, RefreshCw, Search, Settings2, Table2, Trash2, Upload, X } from "lucide-react";
 import { aggregateUniqueGroupRows, UNIQUE_GROUP_EXPORT_COLUMNS } from "@/lib/export/group-aggregation";
-import type { FilterNode, SnpAlleleRole, SnpColorSpec, SnpCopyState, SnpFilter, SortSpec } from "@/lib/filters/types";
+import type { FilterNode, SnpAlleleRole, SnpColorSpec, SnpColumnSpec, SnpCopyState, SnpFilter, SortSpec } from "@/lib/filters/types";
 import { DEFAULT_MAP_SNP_PALETTE, mapSnpPalettes, type MapQueryResponse, type MapSnpPalette } from "@/lib/map/types";
 import {
   PROFILE_FILE_EXTENSION,
@@ -46,6 +46,14 @@ type ViewMode = "table" | "map";
 type PanelMode = "filters" | "sort" | "columns" | "settings" | null;
 type ExportColumnId = string;
 type ExportMode = "rows" | "unique_groups";
+type ExportModePreference = {
+  order: ExportColumnId[];
+  selected: ExportColumnId[];
+};
+type ExportPreferences = {
+  mode: ExportMode;
+  byMode: Partial<Record<ExportMode, ExportModePreference>>;
+};
 
 type SchemaResponse = {
   sampleFields: FieldDefinition[];
@@ -93,6 +101,7 @@ const emptyFilter: FilterNode = {
 };
 
 const explorerStorageKey = "archaebase:explorer-state:v1";
+const exportPreferencesStorageKey = "archaebase:export-preferences:v1";
 const MAX_SORT_RULES = 8;
 const DEFAULT_PANEL_WIDTH = 420;
 const MIN_PANEL_WIDTH = 320;
@@ -174,6 +183,15 @@ function csvValue(value: unknown) {
   return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
+function filenameTimestamp(date = new Date()) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate())
+  ].join("-") + `_${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`;
+}
+
 function countConditions(node: FilterNode): number {
   if (node.type === "condition") return 1;
   return node.children.reduce((total, child) => total + countConditions(child), 0);
@@ -215,6 +233,16 @@ function snpAlleleLabel(variant: GenotypeVariant | null, role: SnpAlleleRole) {
 
 function normalizeMapSnpPalette(value: unknown): MapSnpPalette {
   return mapSnpPalettes.some((palette) => palette.id === value) ? value as MapSnpPalette : DEFAULT_MAP_SNP_PALETTE;
+}
+
+function uniqueSnpColumnSpecs(columns: SnpColumnSpec[]) {
+  const seen = new Set<string>();
+  return columns.filter((column) => {
+    const key = column.snpId.trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function combineWithTimeWindow(filter: FilterNode, timeWindow: TimeWindowValue): FilterNode {
@@ -284,6 +312,7 @@ export function Explorer() {
   const [snpAlleleRole, setSnpAlleleRole] = useState<SnpAlleleRole>("alt");
   const [snpCopyStates, setSnpCopyStates] = useState<SnpCopyState[]>([1, 2]);
   const [snpFilters, setSnpFilters] = useState<SnpFilter[]>([]);
+  const [displaySnpColumns, setDisplaySnpColumns] = useState<SnpColumnSpec[]>([]);
   const [snpColor, setSnpColor] = useState<SnpColorSpec | null>(null);
   const [snpSearchLoading, setSnpSearchLoading] = useState(false);
   const [snpSearchError, setSnpSearchError] = useState<string | null>(null);
@@ -317,17 +346,20 @@ export function Explorer() {
   const [persistHydrated, setPersistHydrated] = useState(false);
   const [draggedProperty, setDraggedProperty] = useState<string | null>(null);
   const [propertyDropTarget, setPropertyDropTarget] = useState<{ id: string; position: "before" | "after" } | null>(null);
+  const [snpColumnPromptOpen, setSnpColumnPromptOpen] = useState(false);
   const [draggedSortIndex, setDraggedSortIndex] = useState<number | null>(null);
   const [sortDropTarget, setSortDropTarget] = useState<{ index: number; position: "before" | "after" } | null>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportMode, setExportMode] = useState<ExportMode>("rows");
   const [exportColumnOrder, setExportColumnOrder] = useState<ExportColumnId[]>([]);
   const [exportSelectedColumns, setExportSelectedColumns] = useState<ExportColumnId[]>([]);
+  const [exportPreferences, setExportPreferences] = useState<ExportPreferences>({ mode: "rows", byMode: {} });
   const [draggedExportColumn, setDraggedExportColumn] = useState<ExportColumnId | null>(null);
   const [exportDropTarget, setExportDropTarget] = useState<{ id: ExportColumnId; position: "before" | "after" } | null>(null);
   const profileImportRef = useRef<HTMLInputElement | null>(null);
   const panelResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const tableQueryCacheRef = useRef(new Map<string, { rows: Record<string, unknown>[]; total: number; releaseName: string | null; snpColumns: FieldDefinition[] }>());
+  const previousSnpFieldIdsRef = useRef<Record<Entity, Set<string>>>({ sample: new Set(), group: new Set() });
 
   useEffect(() => {
     async function loadSchema() {
@@ -366,6 +398,29 @@ export function Explorer() {
     window.localStorage.setItem(periodStorageKey, JSON.stringify(periodOptions));
   }, [periodOptions, periodOptionsHydrated]);
 
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(exportPreferencesStorageKey);
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as ExportPreferences;
+      const mode = parsed.mode === "unique_groups" ? "unique_groups" : "rows";
+      setExportPreferences({
+        mode,
+        byMode: parsed.byMode && typeof parsed.byMode === "object" ? parsed.byMode : {}
+      });
+    } catch {
+      setExportPreferences({ mode: "rows", byMode: {} });
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(exportPreferencesStorageKey, JSON.stringify(exportPreferences));
+    } catch {
+      // Export preference persistence is best-effort.
+    }
+  }, [exportPreferences]);
+
   function buildCurrentProfileView(name = activeProfileName): ProfileView {
     return {
       name,
@@ -384,6 +439,7 @@ export function Explorer() {
       periods: periodOptions,
       admixtureRunId,
       snpFilters,
+      snpColumns: displaySnpColumns,
       snpColor,
       pageSize,
       map: {
@@ -430,6 +486,7 @@ export function Explorer() {
     if (view.periods?.length) setPeriodOptions(view.periods);
     setAdmixtureRunId(view.admixtureRunId ?? null);
     setSnpFilters(view.snpFilters ?? []);
+    setDisplaySnpColumns(uniqueSnpColumnSpecs(view.snpColumns ?? []));
     setSnpColor(view.snpColor ?? null);
     setPageSize(view.pageSize && view.pageSize > 0 ? view.pageSize : 100);
     setMapBaseStyle((view.map?.baseStyle as MapBaseStyle) ?? "light");
@@ -506,6 +563,7 @@ export function Explorer() {
     periodOptions,
     admixtureRunId,
     snpFilters,
+    displaySnpColumns,
     snpColor,
     pageSize,
     mapBaseStyle,
@@ -543,10 +601,14 @@ export function Explorer() {
   }, [allFields, activeSnpColumns]);
 
   useEffect(() => {
-    if (!activeSnpColumns.length) return;
+    const currentIds = new Set(activeSnpColumns.map((field) => field.id));
+    const previousIds = previousSnpFieldIdsRef.current[entity];
+    const newIds = [...currentIds].filter((fieldId) => !previousIds.has(fieldId));
+    previousSnpFieldIdsRef.current[entity] = currentIds;
+    if (!newIds.length) return;
     setVisibleColumns((current) => {
       const active = current[entity] ?? [];
-      const missing = activeSnpColumns.map((field) => field.id).filter((fieldId) => !active.includes(fieldId));
+      const missing = newIds.filter((fieldId) => !active.includes(fieldId));
       if (!missing.length) return current;
       return { ...current, [entity]: [...active, ...missing] };
     });
@@ -639,6 +701,7 @@ export function Explorer() {
       pageSize,
       admixtureRunId,
       snpFilters,
+      snpColumns: displaySnpColumns,
       snpColor,
       mapBounds: null
     };
@@ -695,7 +758,7 @@ export function Explorer() {
 
     void run();
     return () => controller.abort();
-  }, [schema, entity, viewMode, queryFilter, debouncedSearch, searchField, sorting, page, pageSize, admixtureRunId, snpFilters, snpColor]);
+  }, [schema, entity, viewMode, queryFilter, debouncedSearch, searchField, sorting, page, pageSize, admixtureRunId, snpFilters, displaySnpColumns, snpColor]);
 
   function toggleColumn(fieldId: string) {
     setVisibleColumns((current) => {
@@ -732,31 +795,48 @@ export function Explorer() {
     return [...visible, ...hidden, ...(admixtureRunId !== null ? ["admixture"] : [])];
   }
 
+  function exportOrderForMode(mode: ExportMode) {
+    return mode === "unique_groups" ? UNIQUE_GROUP_EXPORT_COLUMNS.map((column) => column.id) : rowExportColumnOrder();
+  }
+
+  function screenExportColumnsForMode(mode: ExportMode) {
+    if (mode === "unique_groups") return UNIQUE_GROUP_EXPORT_COLUMNS.map((column) => column.id);
+    return [
+      ...(visibleColumns[entity] ?? []).filter((fieldId) => fieldById.has(fieldId)),
+      ...(admixtureRunId !== null ? ["admixture"] : [])
+    ];
+  }
+
+  function exportStateForMode(mode: ExportMode) {
+    const fallbackOrder = exportOrderForMode(mode);
+    const allowed = new Set(fallbackOrder);
+    const saved = exportPreferences.byMode[mode];
+    const savedOrder = saved?.order?.filter((columnId) => allowed.has(columnId)) ?? [];
+    const order = [...savedOrder, ...fallbackOrder.filter((columnId) => !savedOrder.includes(columnId))];
+    const selected = saved
+      ? saved.selected.filter((columnId) => allowed.has(columnId))
+      : screenExportColumnsForMode(mode);
+    return { order, selected };
+  }
+
   function openExportDialog() {
-    const order = rowExportColumnOrder();
-    const selected = (visibleColumns[entity] ?? []).filter((fieldId) => fieldById.has(fieldId));
-    setExportMode("rows");
+    const mode = exportPreferences.mode === "unique_groups" ? "unique_groups" : "rows";
+    const { order, selected } = exportStateForMode(mode);
+    setExportMode(mode);
     setExportColumnOrder(order);
-    setExportSelectedColumns([...selected, ...(admixtureRunId !== null ? ["admixture"] : [])]);
+    setExportSelectedColumns(selected);
     setExportDialogOpen(true);
     setDraggedExportColumn(null);
     setExportDropTarget(null);
   }
 
   function switchExportMode(mode: ExportMode) {
+    const { order, selected } = exportStateForMode(mode);
     setExportMode(mode);
+    setExportColumnOrder(order);
+    setExportSelectedColumns(selected);
     setDraggedExportColumn(null);
     setExportDropTarget(null);
-    if (mode === "unique_groups") {
-      const order = UNIQUE_GROUP_EXPORT_COLUMNS.map((column) => column.id);
-      setExportColumnOrder(order);
-      setExportSelectedColumns(order);
-      return;
-    }
-    const order = rowExportColumnOrder();
-    const selected = (visibleColumns[entity] ?? []).filter((fieldId) => fieldById.has(fieldId));
-    setExportColumnOrder(order);
-    setExportSelectedColumns([...selected, ...(admixtureRunId !== null ? ["admixture"] : [])]);
   }
 
   function toggleExportColumn(columnId: ExportColumnId) {
@@ -795,7 +875,6 @@ export function Explorer() {
     setAdmixtureRunId(null);
     setSnpFilters([]);
     setSnpColor(null);
-    setSnpColumns([]);
     setPage(1);
   }
 
@@ -812,6 +891,7 @@ export function Explorer() {
     setTimeMode("calendar");
     setAdmixtureRunId(null);
     setSnpFilters([]);
+    setDisplaySnpColumns([]);
     setSnpColor(null);
     setSnpColumns([]);
     setPageSize(100);
@@ -839,6 +919,20 @@ export function Explorer() {
   const mapIssueBadge = mapIssueCount > 999 ? "999+" : formatCount(mapIssueCount);
   const snpColorValue = snpColor ? `${snpColor.snpId}|${snpColor.alleleRole}` : "";
   const snpCacheBusy = snpCacheStatus?.phase === "caching" || snpCacheStatus?.phase === "clearing";
+
+  useEffect(() => {
+    if (!exportDialogOpen) return;
+    setExportPreferences((current) => ({
+      mode: exportMode,
+      byMode: {
+        ...current.byMode,
+        [exportMode]: {
+          order: exportColumnOrder,
+          selected: exportSelectedColumns
+        }
+      }
+    }));
+  }, [exportDialogOpen, exportMode, exportColumnOrder, exportSelectedColumns]);
 
   useEffect(() => {
     if (viewMode !== "map" || mapIssueCount === 0) setMapIssuePopoverOpen(false);
@@ -957,6 +1051,7 @@ export function Explorer() {
         ...current.filter((filter) => !(filter.snpId === nextFilter.snpId && filter.alleleRole === nextFilter.alleleRole)),
         nextFilter
       ]);
+      setDisplaySnpColumns((current) => uniqueSnpColumnSpecs([...current, { snpId }]));
       setSnpColor({ snpId, alleleRole: snpAlleleRole });
       setPage(1);
     } catch (cacheError) {
@@ -967,6 +1062,30 @@ export function Explorer() {
         detail: cacheError instanceof Error ? cacheError.message : "Unable to cache SNP calls."
       });
     }
+  }
+
+  async function addSnpDisplayColumn() {
+    const snpId = selectedSnp?.snp_id ?? snpSearch.trim();
+    if (!snpId) return;
+    try {
+      await ensureSnpCachedFromUi(snpId);
+      setDisplaySnpColumns((current) => uniqueSnpColumnSpecs([...current, { snpId }]));
+      setSnpColumnPromptOpen(false);
+      setPage(1);
+    } catch (cacheError) {
+      setSnpCacheStatus({
+        phase: "error",
+        snpId,
+        message: "SNP cache failed",
+        detail: cacheError instanceof Error ? cacheError.message : "Unable to cache SNP calls."
+      });
+    }
+  }
+
+  function removeSnpDisplayColumn(snpId: string) {
+    setDisplaySnpColumns((current) => current.filter((column) => column.snpId.toLowerCase() !== snpId.toLowerCase()));
+    setSorting((current) => current.filter((entry) => !entry.id.startsWith("snp_")));
+    setPage(1);
   }
 
   function removeSnpFilter(index: number) {
@@ -980,7 +1099,6 @@ export function Explorer() {
       });
       return next;
     });
-    setSorting((current) => current.filter((entry) => !entry.id.startsWith("snp_")));
     setPage(1);
   }
 
@@ -1057,6 +1175,7 @@ export function Explorer() {
       search: { query: "", field: "group_id" },
       timeWindow: fullTimeWindow,
       snpFilters: [],
+      snpColumns: [],
       snpColor: null,
       order: { sample: schema.defaults.sample, group: schema.defaults.group },
       columnSize: { sample: {}, group: {} }
@@ -1154,6 +1273,7 @@ export function Explorer() {
             pageSize: CSV_EXPORT_PAGE_SIZE,
             admixtureRunId: requestAdmixtureRunId,
             snpFilters,
+            snpColumns: mode === "unique_groups" ? [] : displaySnpColumns,
             snpColor,
             mapBounds: null
           })
@@ -1182,9 +1302,9 @@ export function Explorer() {
     const blob = new Blob([`${lines.join("\n")}\n`], { type: "text/csv;charset=utf-8" });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement("a");
-    const date = new Date().toISOString().slice(0, 10);
+    const timestamp = filenameTimestamp();
     link.href = url;
-    link.download = mode === "unique_groups" ? `archaebase_unique_groups_${date}.csv` : `archaebase_${entity}_table_${date}.csv`;
+    link.download = mode === "unique_groups" ? `archeobase_unique_groups_${timestamp}.csv` : `archeobase_${entity}_table_${timestamp}.csv`;
     link.click();
     window.URL.revokeObjectURL(url);
     return true;
@@ -1602,8 +1722,6 @@ export function Explorer() {
                             onClick={() => {
                               setSnpFilters([]);
                               setSnpColor(null);
-                              setSnpColumns([]);
-                              setSorting((current) => current.filter((entry) => !entry.id.startsWith("snp_")));
                               setPage(1);
                             }}
                           >
@@ -2126,8 +2244,36 @@ export function Explorer() {
                     </span>
                     <input type="checkbox" checked onChange={() => toggleColumn(field.id)} />
                     <span>{field.label}</span>
+                    {field.id.startsWith("snp_") ? (
+                      <button
+                        className="icon-button column-row-action"
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          const matchingColumn = displaySnpColumns.find((column) => field.label.toLowerCase().startsWith(`${column.snpId.toLowerCase()} `));
+                          if (matchingColumn) removeSnpDisplayColumn(matchingColumn.snpId);
+                        }}
+                        aria-label="Remove SNP column"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    ) : null}
                   </label>
                 ))}
+                <div className="add-snp-property-row">
+                  <button
+                    className="button primary add-snp-property"
+                    type="button"
+                    onClick={() => {
+                      setSelectedSnp(null);
+                      setSnpSearch("");
+                      setSnpColumnPromptOpen(true);
+                    }}
+                  >
+                    <Plus size={14} />
+                    Add SNP
+                  </button>
+                </div>
                 {hiddenFields.length ? <div className="property-divider" /> : null}
                 {hiddenFields.map((field) => (
                   <label className="column-row" key={field.id}>
@@ -2230,6 +2376,91 @@ export function Explorer() {
           ) : null}
         </main>
       </div>
+
+      {snpColumnPromptOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <section className="snp-column-dialog" role="dialog" aria-modal="true" aria-label="Add SNP genotype column">
+            <div className="export-dialog-header">
+              <span>Add SNP Column</span>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={() => setSnpColumnPromptOpen(false)}
+                aria-label="Close SNP column dialog"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <label className="snp-search-control">
+              <Search size={14} />
+              <input
+                className="input"
+                value={snpSearch}
+                autoFocus
+                placeholder="rs2728 or chr2:136608646"
+                onChange={(event) => {
+                  setSnpSearch(event.target.value);
+                  setSelectedSnp(null);
+                }}
+              />
+            </label>
+            {snpSearchError ? <p className="panel-error">{snpSearchError}</p> : null}
+            {snpResults.length ? (
+              <div className="snp-result-list">
+                {snpResults.map((variant) => (
+                  <button
+                    className={`snp-result ${selectedSnp?.id === variant.id ? "active" : ""}`}
+                    type="button"
+                    key={variant.id}
+                    onClick={() => {
+                      setSelectedSnp(variant);
+                      setSnpSearch(variant.snp_id);
+                    }}
+                  >
+                    <span className="snp-result-main">
+                      <b>{variant.snp_id}</b>
+                      <small>{genotypeVariantPosition(variant)} · {genotypeVariantAlleles(variant)}</small>
+                    </span>
+                    <span className={`snp-cache-badge ${variant.cached ? "cached" : ""}`}>
+                      {genotypeVariantCacheLabel(variant)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : snpSearchLoading ? (
+              <p className="panel-empty compact">Searching SNPs...</p>
+            ) : null}
+            {snpCacheStatus ? (
+              <div className={`snp-cache-progress ${snpCacheStatus.phase}`}>
+                {snpCacheStatus.phase === "caching" || snpCacheStatus.phase === "clearing" ? (
+                  <Loader2 className="spin" size={16} />
+                ) : (
+                  <Database size={16} />
+                )}
+                <div>
+                  <b>{snpCacheStatus.message}</b>
+                  {snpCacheStatus.detail ? <small>{snpCacheStatus.detail}</small> : null}
+                  {snpCacheStatus.phase === "caching" || snpCacheStatus.phase === "clearing" ? <span className="snp-progress-bar"><i /></span> : null}
+                </div>
+              </div>
+            ) : null}
+            <div className="export-dialog-footer">
+              <button className="button" type="button" onClick={() => setSnpColumnPromptOpen(false)}>
+                Cancel
+              </button>
+              <button
+                className="button primary"
+                type="button"
+                onClick={() => void addSnpDisplayColumn()}
+                disabled={snpCacheBusy || !(selectedSnp?.snp_id ?? snpSearch.trim())}
+              >
+                {snpCacheStatus?.phase === "caching" ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
+                Add SNP
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {exportDialogOpen ? (
         <div className="modal-backdrop" role="presentation">

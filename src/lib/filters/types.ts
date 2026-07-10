@@ -31,6 +31,10 @@ export type SnpFilter = {
   copyStates: SnpCopyState[];
 };
 
+export type SnpColumnSpec = {
+  snpId: string;
+};
+
 export type SnpColorSpec = {
   snpId: string;
   alleleRole: SnpAlleleRole;
@@ -56,6 +60,7 @@ export type QueryRequest = {
   mapBounds?: MapBounds | null;
   admixtureRunId?: number | null;
   snpFilters?: SnpFilter[];
+  snpColumns?: SnpColumnSpec[];
   snpColor?: SnpColorSpec | null;
 };
 

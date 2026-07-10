@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg";
-import type { SnpAlleleRole, SnpColorSpec, SnpCopyState, SnpFilter } from "@/lib/filters/types";
+import type { SnpAlleleRole, SnpColorSpec, SnpColumnSpec, SnpCopyState, SnpFilter } from "@/lib/filters/types";
 import {
   countsForCallCode,
   decodePackedCallCodes,
@@ -50,6 +50,13 @@ export type PreparedSnpFilter = GenotypeVariantRow & {
   columnId: string;
   columnLabel: string;
   joinAlias: string;
+};
+
+export type PreparedSnpColumn = GenotypeVariantRow & {
+  columnId: string;
+  columnLabel: string;
+  joinAlias: string;
+  fromFilter: boolean;
 };
 
 export type PreparedSnpColor = GenotypeVariantRow & {
@@ -390,6 +397,49 @@ export async function prepareSnpFilters(pool: Pool, releaseId: string | number, 
   return prepared;
 }
 
+export async function prepareSnpColumns(
+  pool: Pool,
+  releaseId: string | number,
+  columns: SnpColumnSpec[] | undefined | null,
+  filters: PreparedSnpFilter[] = []
+) {
+  const prepared: PreparedSnpColumn[] = [];
+  const seenVariantIds = new Set<string>();
+
+  for (const filter of filters) {
+    prepared.push({
+      ...filter,
+      columnId: filter.columnId,
+      columnLabel: filter.columnLabel,
+      joinAlias: filter.joinAlias,
+      fromFilter: true
+    });
+    seenVariantIds.add(String(filter.id));
+  }
+
+  const active = (columns ?? []).filter((column) => column.snpId?.trim());
+  if (!active.length) return prepared;
+
+  const dataset = await getLatestGenotypeDataset(pool, releaseId);
+  let displayIndex = 0;
+  for (const column of active) {
+    const variant = await findVariantBySnpId(pool, dataset.id, column.snpId.trim());
+    if (seenVariantIds.has(String(variant.id))) continue;
+    await ensureVariantCallsCached(pool, variant.id);
+    prepared.push({
+      ...variant,
+      columnId: snpColumnId(variant.id),
+      columnLabel: snpColumnLabel(variant),
+      joinAlias: `gvc_snp_col_${displayIndex}`,
+      fromFilter: false
+    });
+    seenVariantIds.add(String(variant.id));
+    displayIndex += 1;
+  }
+
+  return prepared;
+}
+
 export async function prepareSnpColor(
   pool: Pool,
   releaseId: string | number,
@@ -448,36 +498,53 @@ export function buildSnpColorJoin(color: PreparedSnpColor | null, offset: number
   };
 }
 
-export function snpSelectColumns(filters: PreparedSnpFilter[]) {
-  return filters.map((filter) => `${genotypeLabelSql(filter.joinAlias, filter)} AS ${sqlIdentifier(filter.columnId)}`);
+export function buildSnpColumnJoinSql(columns: PreparedSnpColumn[], offset: number): Pick<SnpSql, "joins" | "params"> {
+  const joins: string[] = [];
+  const params: unknown[] = [];
+
+  for (const column of columns) {
+    if (column.fromFilter) continue;
+    params.push(column.id);
+    const variantParam = `$${offset + params.length}`;
+    joins.push(`LEFT JOIN genotype_variant_calls ${column.joinAlias} ON ${column.joinAlias}.sample_id = s.id AND ${column.joinAlias}.variant_id = ${variantParam}`);
+  }
+
+  return {
+    joins: joins.join("\n"),
+    params
+  };
 }
 
-export function snpGroupSelectColumns(filters: PreparedSnpFilter[]) {
-  return filters.map((filter) => {
-    const expression = genotypeLabelSql(filter.joinAlias, filter);
-    return `${expression} AS ${sqlIdentifier(filter.columnId)}`;
+export function snpSelectColumns(columns: PreparedSnpColumn[]) {
+  return columns.map((column) => `${genotypeLabelSql(column.joinAlias, column)} AS ${sqlIdentifier(column.columnId)}`);
+}
+
+export function snpGroupSelectColumns(columns: PreparedSnpColumn[]) {
+  return columns.map((column) => {
+    const expression = genotypeLabelSql(column.joinAlias, column);
+    return `${expression} AS ${sqlIdentifier(column.columnId)}`;
   });
 }
 
-export function snpGroupAggregateColumns(filters: PreparedSnpFilter[]) {
-  return filters.map((filter) => (
-    `string_agg(DISTINCT fs.${sqlIdentifier(filter.columnId)}, ', ' ORDER BY fs.${sqlIdentifier(filter.columnId)}) AS ${sqlIdentifier(filter.columnId)}`
+export function snpGroupAggregateColumns(columns: PreparedSnpColumn[]) {
+  return columns.map((column) => (
+    `string_agg(DISTINCT fs.${sqlIdentifier(column.columnId)}, ', ' ORDER BY fs.${sqlIdentifier(column.columnId)}) AS ${sqlIdentifier(column.columnId)}`
   ));
 }
 
-export function snpColumnDefinitions(filters: PreparedSnpFilter[]): SnpColumnDefinition[] {
-  return filters.map((filter) => ({
-    id: filter.columnId,
-    label: filter.columnLabel,
+export function snpColumnDefinitions(columns: PreparedSnpColumn[]): SnpColumnDefinition[] {
+  return columns.map((column) => ({
+    id: column.columnId,
+    label: column.columnLabel,
     kind: "text",
     sortable: true,
     defaultVisible: true
   }));
 }
 
-export function snpSortExpression(fieldId: string, filters: PreparedSnpFilter[], entity: "sample" | "group") {
-  const filter = filters.find((candidate) => candidate.columnId === fieldId);
-  if (!filter) return null;
-  if (entity === "group") return `g.${sqlIdentifier(filter.columnId)}`;
-  return `${filter.joinAlias}.call_code`;
+export function snpSortExpression(fieldId: string, columns: PreparedSnpColumn[], entity: "sample" | "group") {
+  const column = columns.find((candidate) => candidate.columnId === fieldId);
+  if (!column) return null;
+  if (entity === "group") return `g.${sqlIdentifier(column.columnId)}`;
+  return `${column.joinAlias}.call_code`;
 }

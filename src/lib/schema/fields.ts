@@ -106,6 +106,14 @@ export const groupFields = [
     sortable: true
   },
   {
+    id: "genetic_ids",
+    label: "Genetic IDs",
+    kind: "text",
+    groupColumn: "g.genetic_ids",
+    defaultVisible: false,
+    sortable: true
+  },
+  {
     id: "molecular_sexes",
     label: "Molecular Sexes",
     kind: "text",

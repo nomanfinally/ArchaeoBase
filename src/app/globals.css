@@ -1698,7 +1698,8 @@ button:disabled {
 }
 
 .metadata-filter-block,
-.snp-panel {
+.snp-panel,
+.property-snp-panel {
   display: grid;
   gap: 9px;
 }
@@ -1748,11 +1749,16 @@ button:disabled {
   font-weight: 560;
 }
 
-.snp-panel {
+.snp-panel,
+.property-snp-panel {
   padding: 11px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfbfa;
+}
+
+.property-snp-panel {
+  margin-bottom: 10px;
 }
 
 .snp-panel-header > div:first-child {
@@ -1808,6 +1814,10 @@ button:disabled {
 .snp-result-list {
   max-height: 182px;
   overflow: auto;
+}
+
+.snp-result-list.compact {
+  max-height: 132px;
 }
 
 .snp-result {
@@ -2217,6 +2227,34 @@ button:disabled {
   border-radius: 4px;
 }
 
+.column-row-action {
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+}
+
+.add-snp-property-row {
+  display: flex;
+  justify-content: flex-start;
+  padding: 4px 0 4px 48px;
+}
+
+.add-snp-property {
+  width: max-content;
+  min-height: 28px;
+  gap: 5px;
+  padding: 4px 9px;
+  border-color: var(--text) !important;
+  background: var(--text) !important;
+  color: white !important;
+}
+
+.add-snp-property:hover {
+  border-color: #343431 !important;
+  background: #343431 !important;
+  color: white !important;
+}
+
 .column-row:hover {
   background: var(--panel-subtle);
 }
@@ -2314,6 +2352,19 @@ button:disabled {
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.snp-column-dialog {
+  width: min(460px, calc(100vw - 28px));
+  max-height: min(640px, calc(100vh - 36px));
+  display: grid;
+  gap: 10px;
+  overflow: auto;
   padding: 12px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;

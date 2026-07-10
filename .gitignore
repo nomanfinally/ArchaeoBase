@@ -1,3 +1,5 @@
+.kilo/
+
 # Environment and secrets
 .env
 .env.*

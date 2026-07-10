@@ -31,12 +31,20 @@
 - The mapping CSV is intentionally tracked even though the rest of `data/` is ignored, because import and backfill scripts depend on it.
 - The explorer keeps active view state in browser local storage and profile YAML. The time-window display mode (`BCE/CE` or `BP`) is persisted with the rest of the view so reopening the period panel preserves the user's mode.
 
+## CSV Export
+
+- The `Unique group IDs` CSV mode is aggregated from the currently matching sample rows, not from the Group Table response. Text fields such as genetic IDs, haplogroups, period names, countries, molecular sex, localities, suffixes, publications, and DOIs are combined with commas; coordinate and date outlier segments are separated with semicolons; SNP counts are averaged.
+
+## Development Server
+
+- `npm run dev` uses webpack with `WATCHPACK_POLLING=true` because the project lives under a large Syncthing tree where native Turbopack/Watchpack file watching can hit `EMFILE: too many open files`. Polling keeps local development reliable without changing production builds.
+
 ## SNP Genotype Lookup
 
 - AADR PACKEDANCESTRYMAP `.geno/.snp/.ind` files are the read-only genotype authority. The app does not use PLINK in the runtime path and does not copy the full genotype matrix into PostgreSQL.
 - PostgreSQL stores genotype dataset metadata, `.ind` sample order mapped to `samples.id`, searchable `.snp` variant metadata, and cached per-sample calls only for SNPs users query.
 - First use of an indexed SNP decodes one packed `.geno` row and caches calls in `genotype_variant_calls`; `npm run genotypes:cache -- --snp <rsid>` can prewarm known SNPs for demos.
 - Normal metadata table/map queries do not touch genotype tables. SNP joins are added only when `snpFilters` or SNP map coloring is active.
-- SNP table columns are dynamic and sortable only for active SNP filters returned by the server. The server resolves each requested SNP against indexed metadata before using a generated SQL expression.
+- SNP table columns are dynamic and sortable only for server-resolved SNP filters or display-only SNP genotype columns. Adding a SNP filter also pins the same SNP as a display column, while Properties can add SNP genotype columns without filtering rows.
 - Map SNP coloring is applied at query/render time from cached calls. `sample_map_cache` and `group_map_cache` are not rebuilt for genotype state.
 - SNP map palettes are request/profile settings, not cached map data. Each palette colors selected-allele genotype states with one hue family: 2 copies darkest, 1 copy lighter, and 0 copies lightest; missing calls remain black.

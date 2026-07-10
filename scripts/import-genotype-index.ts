@@ -158,6 +158,7 @@ async function main() {
     if (existing.rowCount && args.replace) {
       await client.query("DELETE FROM genotype_datasets WHERE id = $1", [existing.rows[0].id]);
     }
+    await client.query("UPDATE genotype_datasets SET is_active = false WHERE release_id = $1", [releaseId]);
 
     const sampleLookup = await client.query<{ id: string; genetic_id: string }>(
       "SELECT id::text, genetic_id FROM samples WHERE release_id = $1 AND genetic_id = ANY($2)",
@@ -172,8 +173,8 @@ async function main() {
     const dataset = await client.query(
       `
         INSERT INTO genotype_datasets
-          (release_id, name, source_geno_file, source_snp_file, source_ind_file, sample_count, variant_count, row_bytes, header_sample_hash, header_variant_hash)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          (release_id, name, source_geno_file, source_snp_file, source_ind_file, sample_count, variant_count, row_bytes, header_sample_hash, header_variant_hash, is_active)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true)
         RETURNING id
       `,
       [

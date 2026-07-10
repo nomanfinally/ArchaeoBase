@@ -1,6 +1,7 @@
 import { getLatestReleaseId, getPool } from "@/lib/db";
 import { compileGlobalSearch, compileMapBounds, compileSampleFilter, mergeWhere } from "@/lib/filters/compile";
 import type { QueryRequest, SortSpec, SqlFragment } from "@/lib/filters/types";
+import { G25_COORD_FIELD_IDS, G25_LINE_FIELD_ID, G25_NAME_FIELD_ID, G25_SOURCE_FIELD_ID } from "@/lib/g25";
 import {
   buildSnpColumnJoinSql,
   buildSnpFilterSql,
@@ -39,6 +40,23 @@ const SAMPLE_MAP_SELECT_COLUMNS = [
 const MAX_PAGE_SIZE = 500;
 const MAX_MAP_SIZE = 30000;
 const MAX_SORT_RULES = 8;
+const G25_SAMPLE_JOIN = "LEFT JOIN g25_coordinates g25 ON g25.sample_id = s.id";
+const G25_GROUP_SAMPLE_COLUMNS = [
+  "g25.source AS g25_source",
+  ...G25_COORD_FIELD_IDS.map((fieldId, index) => `g25.coord_${index + 1} AS ${fieldId}`)
+];
+const G25_GROUP_NAME_SQL = "fs.group_id";
+const G25_GROUP_COORDINATE_DECIMALS = 6;
+const G25_GROUP_COORDINATE_SQL_FORMAT = `FM999999990.${"0".repeat(G25_GROUP_COORDINATE_DECIMALS)}`;
+const G25_GROUP_COORDINATE_TEXT_COLUMNS = G25_COORD_FIELD_IDS.map(
+  (fieldId) => `COALESCE(to_char(round(avg(fs.${fieldId})::numeric, ${G25_GROUP_COORDINATE_DECIMALS}), '${G25_GROUP_COORDINATE_SQL_FORMAT}'), '')`
+);
+const G25_GROUP_AGGREGATE_COLUMNS = [
+  `concat_ws(',', ${G25_GROUP_NAME_SQL}, ${G25_GROUP_COORDINATE_TEXT_COLUMNS.join(", ")}) AS ${G25_LINE_FIELD_ID}`,
+  `${G25_GROUP_NAME_SQL} AS ${G25_NAME_FIELD_ID}`,
+  `string_agg(DISTINCT fs.g25_source, ', ' ORDER BY fs.g25_source) AS ${G25_SOURCE_FIELD_ID}`,
+  ...G25_COORD_FIELD_IDS.map((fieldId) => `avg(fs.${fieldId})::double precision AS ${fieldId}`)
+];
 
 function clampPage(value: unknown) {
   const page = Number(value ?? 1);
@@ -142,6 +160,7 @@ async function querySamples(request: QueryRequest) {
       FROM samples s
       ${snpSql.joins}
       ${snpColumnSql.joins}
+      ${G25_SAMPLE_JOIN}
       WHERE ${sampleWhereText}
       ORDER BY ${orderBy}
     `,
@@ -211,10 +230,12 @@ async function queryGroups(request: QueryRequest) {
         s.*,
         ${buildPeriodLabelSql("s.date_mean_bp")} AS period_name,
         ${buildPeriodSortSql("s.date_mean_bp")} AS period_sort
+        ${G25_GROUP_SAMPLE_COLUMNS.length ? `,\n        ${G25_GROUP_SAMPLE_COLUMNS.join(",\n        ")}` : ""}
         ${snpColumns.length ? `,\n        ${snpGroupSelectColumns(snpColumns).join(",\n        ")}` : ""}
       FROM samples s
       ${snpSql.joins}
       ${snpColumnSql.joins}
+      ${G25_SAMPLE_JOIN}
       WHERE ${sampleWhereText}
     ),
     group_rows AS (
@@ -257,6 +278,7 @@ async function queryGroups(request: QueryRequest) {
         avg(fs.snp_2m)::double precision AS snp_2m_avg,
         min(fs.snp_1240k) AS snp_1240k_min,
         max(fs.snp_1240k) AS snp_1240k_max
+        ${G25_GROUP_AGGREGATE_COLUMNS.length ? `,\n        ${G25_GROUP_AGGREGATE_COLUMNS.join(",\n        ")}` : ""}
         ${snpColumns.length ? `,\n        ${snpGroupAggregateColumns(snpColumns).join(",\n        ")}` : ""}
       FROM filtered_samples fs
       WHERE fs.group_id IS NOT NULL

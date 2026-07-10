@@ -43,8 +43,23 @@
 
 - AADR PACKEDANCESTRYMAP `.geno/.snp/.ind` files are the read-only genotype authority. The app does not use PLINK in the runtime path and does not copy the full genotype matrix into PostgreSQL.
 - PostgreSQL stores genotype dataset metadata, `.ind` sample order mapped to `samples.id`, searchable `.snp` variant metadata, and cached per-sample calls only for SNPs users query.
+- Multiple genotype datasets can be indexed for one AADR release. `genotype_datasets.is_active` records the selected `.geno/.snp/.ind` set, and runtime SNP lookup prefers the active dataset before falling back to the newest import.
 - First use of an indexed SNP decodes one packed `.geno` row and caches calls in `genotype_variant_calls`; `npm run genotypes:cache -- --snp <rsid>` can prewarm known SNPs for demos.
 - Normal metadata table/map queries do not touch genotype tables. SNP joins are added only when `snpFilters` or SNP map coloring is active.
 - SNP table columns are dynamic and sortable only for server-resolved SNP filters or display-only SNP genotype columns. Adding a SNP filter also pins the same SNP as a display column, while Properties can add SNP genotype columns without filtering rows.
 - Map SNP coloring is applied at query/render time from cached calls. `sample_map_cache` and `group_map_cache` are not rebuilt for genotype state.
 - SNP map palettes are request/profile settings, not cached map data. Each palette colors selected-allele genotype states with one hue family: 2 copies darkest, 1 copy lighter, and 0 copies lightest; missing calls remain black.
+
+## G25 Coordinates
+
+- G25 coordinate sheets are read-only sources. Import them with `npm run import:g25 -- --file imports/g25.csv --replace`; the importer writes linked rows to `g25_coordinates` and does not edit the source CSV.
+- Headerless G25 rows are interpreted as `coords_name,coord_1,...,coord_25`. Headered CSVs may include `coords_name`, `genetic_id`, and `source`; if `genetic_id` is absent, it is inferred from the coordinate name segment after `:` and before `__`.
+- Table properties expose hidden-by-default `G25 Coordinates` as one full `name,coord_1,...,coord_25` value, plus optional source/name metadata for ordinary row exports. Split coordinate columns remain internal for group averaging and are not exposed in the UI. Missing imported coordinates still receive a fallback name built from `group_id:genetic_id`, with 25 empty coordinate slots.
+- Group table/export mode computes per-PC G25 averages from the currently matching sample rows, ignoring missing coordinate values rather than treating them as zero. Group G25 coordinate lines always use `group_id` as the name/info prefix, so the exported value is `GroupID,avg1,...,avg25` and never inherits individual sample coordinate names. Averages are rounded to six decimal places to match ordinary G25 coordinate precision.
+- The dedicated G25 export mode exposes only `G25 Coordinates` and `G25 Source`; sample name/info is part of the full G25 coordinate value. The full G25 line is quoted so commas remain inside the cell. Normal row exports can include G25 columns alongside any other selected metadata and retain CSV headers.
+
+## Maintenance CLI
+
+- `npm run ab -- ...` is the project maintenance entrypoint for database tasks. It wraps the existing importers for AADR `.anno`, G25 coordinates, genotype indexes, ADMIXTURE runs, region backfill, map cache rebuild/tuning, and migrations.
+- Period range definitions live in tracked `data/period_definitions.json` instead of source code. Use `npm run ab -- periods export/import/show` to review or update them, then rebuild the map cache so cached period labels/colors match the new ranges.
+- Use `npm run ab -- genotypes list` and `npm run ab -- genotypes use --id <dataset_id>` to select among indexed `.geno/.snp/.ind` datasets without reimporting source metadata.

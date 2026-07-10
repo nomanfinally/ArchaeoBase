@@ -5,6 +5,7 @@ import type { SortingState } from "@tanstack/react-table";
 import { AlertCircle, ArrowUpDown, Columns3, Copy, Database, Download, Edit3, Filter, GripVertical, Loader2, Map as MapIcon, Plus, RefreshCw, Search, Settings2, Table2, Trash2, Upload, X } from "lucide-react";
 import { aggregateUniqueGroupRows, UNIQUE_GROUP_EXPORT_COLUMNS } from "@/lib/export/group-aggregation";
 import type { FilterNode, SnpAlleleRole, SnpColorSpec, SnpColumnSpec, SnpCopyState, SnpFilter, SortSpec } from "@/lib/filters/types";
+import { G25_COORDINATE_EXPORT_COLUMNS, G25_EXPORT_COLUMNS } from "@/lib/g25";
 import { DEFAULT_MAP_SNP_PALETTE, mapSnpPalettes, type MapQueryResponse, type MapSnpPalette } from "@/lib/map/types";
 import {
   PROFILE_FILE_EXTENSION,
@@ -45,7 +46,7 @@ type Entity = "sample" | "group";
 type ViewMode = "table" | "map";
 type PanelMode = "filters" | "sort" | "columns" | "settings" | null;
 type ExportColumnId = string;
-type ExportMode = "rows" | "unique_groups";
+type ExportMode = "rows" | "unique_groups" | "g25_coordinates";
 type ExportModePreference = {
   order: ExportColumnId[];
   selected: ExportColumnId[];
@@ -403,7 +404,7 @@ export function Explorer() {
       const stored = window.localStorage.getItem(exportPreferencesStorageKey);
       if (!stored) return;
       const parsed = JSON.parse(stored) as ExportPreferences;
-      const mode = parsed.mode === "unique_groups" ? "unique_groups" : "rows";
+      const mode = parsed.mode === "unique_groups" || parsed.mode === "g25_coordinates" ? parsed.mode : "rows";
       setExportPreferences({
         mode,
         byMode: parsed.byMode && typeof parsed.byMode === "object" ? parsed.byMode : {}
@@ -627,6 +628,10 @@ export function Explorer() {
       UNIQUE_GROUP_EXPORT_COLUMNS.forEach((column) => labels.set(column.id, column.label));
       return labels;
     }
+    if (exportMode === "g25_coordinates") {
+      G25_EXPORT_COLUMNS.forEach((column) => labels.set(column.id, column.label));
+      return labels;
+    }
     allTableFields.forEach((field) => labels.set(field.id, field.label));
     if (admixtureRunId !== null) labels.set("admixture", "ADMIXTURE");
     return labels;
@@ -796,11 +801,14 @@ export function Explorer() {
   }
 
   function exportOrderForMode(mode: ExportMode) {
-    return mode === "unique_groups" ? UNIQUE_GROUP_EXPORT_COLUMNS.map((column) => column.id) : rowExportColumnOrder();
+    if (mode === "unique_groups") return UNIQUE_GROUP_EXPORT_COLUMNS.map((column) => column.id);
+    if (mode === "g25_coordinates") return G25_EXPORT_COLUMNS.map((column) => column.id);
+    return rowExportColumnOrder();
   }
 
   function screenExportColumnsForMode(mode: ExportMode) {
     if (mode === "unique_groups") return UNIQUE_GROUP_EXPORT_COLUMNS.map((column) => column.id);
+    if (mode === "g25_coordinates") return G25_COORDINATE_EXPORT_COLUMNS.map((column) => column.id);
     return [
       ...(visibleColumns[entity] ?? []).filter((fieldId) => fieldById.has(fieldId)),
       ...(admixtureRunId !== null ? ["admixture"] : [])
@@ -820,7 +828,7 @@ export function Explorer() {
   }
 
   function openExportDialog() {
-    const mode = exportPreferences.mode === "unique_groups" ? "unique_groups" : "rows";
+    const mode = exportPreferences.mode === "unique_groups" || exportPreferences.mode === "g25_coordinates" ? exportPreferences.mode : "rows";
     const { order, selected } = exportStateForMode(mode);
     setExportMode(mode);
     setExportColumnOrder(order);
@@ -1237,6 +1245,10 @@ export function Explorer() {
           const column = UNIQUE_GROUP_EXPORT_COLUMNS.find((candidate) => candidate.id === columnId);
           return column ? { id: column.id, label: column.label } : null;
         }
+        if (mode === "g25_coordinates") {
+          const column = G25_EXPORT_COLUMNS.find((candidate) => candidate.id === columnId);
+          return column ? { id: column.id, label: column.label } : null;
+        }
         if (columnId === "admixture" && admixtureRunId !== null) return { id: columnId, label: "ADMIXTURE" };
         const field = fieldById.get(columnId);
         return field ? { id: field.id, label: field.label } : null;
@@ -1250,7 +1262,7 @@ export function Explorer() {
     const headers = exportColumns.map((column) => column.label);
     const sort = mode === "unique_groups" && entity !== "sample" ? [{ field: "group_id", direction: "asc" as const }] : sortingToSortSpecs(sorting);
     const requestEntity: Entity = mode === "unique_groups" ? "sample" : entity;
-    const requestAdmixtureRunId = mode === "unique_groups" ? null : admixtureRunId;
+    const requestAdmixtureRunId = mode === "unique_groups" || mode === "g25_coordinates" ? null : admixtureRunId;
     const requestSearchField = mode === "unique_groups" && searchField !== "all" && !schema?.sampleFields.some((field) => field.id === searchField)
       ? "all"
       : searchField;
@@ -1273,7 +1285,7 @@ export function Explorer() {
             pageSize: CSV_EXPORT_PAGE_SIZE,
             admixtureRunId: requestAdmixtureRunId,
             snpFilters,
-            snpColumns: mode === "unique_groups" ? [] : displaySnpColumns,
+            snpColumns: mode === "unique_groups" || mode === "g25_coordinates" ? [] : displaySnpColumns,
             snpColor,
             mapBounds: null
           })
@@ -1293,18 +1305,20 @@ export function Explorer() {
     }
 
     const rowsForCsv = mode === "unique_groups" ? aggregateUniqueGroupRows(exportedRows) : exportedRows;
-    const lines = [
-      headers.map(csvValue).join(","),
-      ...rowsForCsv.map((row) => [
+    const dataLines = rowsForCsv.map((row) => [
         ...exportColumns.map((column) => csvValue(row[column.id]))
-      ].join(","))
-    ];
+      ].join(","));
+    const lines = mode === "g25_coordinates" ? dataLines : [headers.map(csvValue).join(","), ...dataLines];
     const blob = new Blob([`${lines.join("\n")}\n`], { type: "text/csv;charset=utf-8" });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement("a");
     const timestamp = filenameTimestamp();
     link.href = url;
-    link.download = mode === "unique_groups" ? `archeobase_unique_groups_${timestamp}.csv` : `archeobase_${entity}_table_${timestamp}.csv`;
+    link.download = mode === "unique_groups"
+      ? `archeobase_unique_groups_${timestamp}.csv`
+      : mode === "g25_coordinates"
+        ? `archeobase_${entity}_g25_${timestamp}.csv`
+        : `archeobase_${entity}_table_${timestamp}.csv`;
     link.click();
     window.URL.revokeObjectURL(url);
     return true;
@@ -2498,6 +2512,13 @@ export function Explorer() {
                 >
                   Unique group IDs
                 </button>
+                <button
+                  className={exportMode === "g25_coordinates" ? "active" : ""}
+                  type="button"
+                  onClick={() => switchExportMode("g25_coordinates")}
+                >
+                  G25 coords
+                </button>
               </div>
             </div>
 
@@ -2505,14 +2526,9 @@ export function Explorer() {
               <button
                 className="button"
                 type="button"
-                onClick={() => setExportSelectedColumns(exportMode === "unique_groups"
-                  ? UNIQUE_GROUP_EXPORT_COLUMNS.map((column) => column.id)
-                  : [
-                      ...(visibleColumns[entity] ?? []).filter((fieldId) => fieldById.has(fieldId)),
-                      ...(admixtureRunId !== null ? ["admixture"] : [])
-                    ])}
+                onClick={() => setExportSelectedColumns(screenExportColumnsForMode(exportMode))}
               >
-                {exportMode === "unique_groups" ? "Default Columns" : "Screen Columns"}
+                {exportMode === "g25_coordinates" ? "G25 Columns" : exportMode === "unique_groups" ? "Default Columns" : "Screen Columns"}
               </button>
               <button className="button" type="button" onClick={() => setExportSelectedColumns([...exportColumnOrder])}>
                 All Columns

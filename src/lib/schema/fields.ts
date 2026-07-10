@@ -1,3 +1,4 @@
+import { G25_COORD_FIELD_IDS, G25_LINE_FIELD_ID, G25_NAME_FIELD_ID, G25_SOURCE_FIELD_ID } from "@/lib/g25";
 import { buildPeriodLabelSql } from "@/lib/periods";
 
 export type FieldKind = "text" | "enum" | "number" | "year" | "boolean";
@@ -57,6 +58,40 @@ function sampleField(
 }
 
 const PERIOD_SAMPLE_COLUMN = buildPeriodLabelSql("s.date_mean_bp");
+const G25_NAME_SAMPLE_COLUMN = "COALESCE(NULLIF(g25.coords_name, ''), CASE WHEN s.group_id IS NOT NULL AND s.group_id <> '' THEN s.group_id || ':' || s.genetic_id ELSE s.genetic_id END)";
+const G25_LINE_SAMPLE_COLUMN = `concat_ws(',', ${G25_NAME_SAMPLE_COLUMN}, ${G25_COORD_FIELD_IDS
+  .map((_, index) => `COALESCE(g25.coord_${index + 1}::text, '')`)
+  .join(", ")})`;
+
+const g25SampleFields = [
+  {
+    id: G25_LINE_FIELD_ID,
+    label: "G25 Coordinates",
+    kind: "text",
+    sampleColumn: G25_LINE_SAMPLE_COLUMN,
+    defaultVisible: false,
+    filterable: false,
+    sortable: true
+  },
+  {
+    id: G25_NAME_FIELD_ID,
+    label: "G25 Name",
+    kind: "text",
+    sampleColumn: G25_NAME_SAMPLE_COLUMN,
+    defaultVisible: false,
+    filterable: false,
+    sortable: true
+  },
+  {
+    id: G25_SOURCE_FIELD_ID,
+    label: "G25 Source",
+    kind: "text",
+    sampleColumn: "g25.source",
+    defaultVisible: false,
+    filterable: false,
+    sortable: true
+  }
+] satisfies FieldDefinition[];
 
 export const sampleFields = [
   sampleField("genetic_id", "Genetic ID", "text", { defaultVisible: true }),
@@ -84,6 +119,34 @@ export const sampleFields = [
     sampleColumn: PERIOD_SAMPLE_COLUMN,
     defaultVisible: true,
     filterable: true,
+    sortable: true
+  },
+  ...g25SampleFields
+] satisfies FieldDefinition[];
+
+const g25GroupFields = [
+  {
+    id: G25_LINE_FIELD_ID,
+    label: "G25 Coordinates",
+    kind: "text",
+    groupColumn: "g.g25_line",
+    defaultVisible: false,
+    sortable: true
+  },
+  {
+    id: G25_NAME_FIELD_ID,
+    label: "G25 Name",
+    kind: "text",
+    groupColumn: "g.g25_name",
+    defaultVisible: false,
+    sortable: true
+  },
+  {
+    id: G25_SOURCE_FIELD_ID,
+    label: "G25 Source",
+    kind: "text",
+    groupColumn: "g.g25_source",
+    defaultVisible: false,
     sortable: true
   }
 ] satisfies FieldDefinition[];
@@ -240,7 +303,8 @@ export const groupFields = [
     groupColumn: "g.snp_2m_avg",
     defaultVisible: false,
     sortable: true
-  }
+  },
+  ...g25GroupFields
 ] satisfies FieldDefinition[];
 
 export const filterableSampleFields = sampleFields.filter((field) => field.filterable);

@@ -137,7 +137,7 @@ export async function getLatestGenotypeDataset(db: Queryable, releaseId: string 
       SELECT *
       FROM genotype_datasets
       WHERE release_id = $1
-      ORDER BY imported_at DESC, id DESC
+      ORDER BY is_active DESC, imported_at DESC, id DESC
       LIMIT 1
     `,
     [releaseId]

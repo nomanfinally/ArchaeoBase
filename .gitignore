@@ -23,6 +23,7 @@ coverage/
 # Raw/generated data should be imported, not committed.
 data/*
 !data/political_entity_regions.csv
+!data/period_definitions.json
 imports/
 exports/
 dumps/

@@ -102,6 +102,42 @@ CREATE TABLE IF NOT EXISTS admixture_values (
   PRIMARY KEY (run_id, sample_id, component_index)
 );
 
+CREATE TABLE IF NOT EXISTS g25_coordinates (
+  id BIGSERIAL PRIMARY KEY,
+  release_id BIGINT NOT NULL REFERENCES aadr_releases(id) ON DELETE CASCADE,
+  sample_id BIGINT NOT NULL REFERENCES samples(id) ON DELETE CASCADE,
+  genetic_id TEXT NOT NULL,
+  coords_name TEXT NOT NULL,
+  source TEXT,
+  coord_1 DOUBLE PRECISION,
+  coord_2 DOUBLE PRECISION,
+  coord_3 DOUBLE PRECISION,
+  coord_4 DOUBLE PRECISION,
+  coord_5 DOUBLE PRECISION,
+  coord_6 DOUBLE PRECISION,
+  coord_7 DOUBLE PRECISION,
+  coord_8 DOUBLE PRECISION,
+  coord_9 DOUBLE PRECISION,
+  coord_10 DOUBLE PRECISION,
+  coord_11 DOUBLE PRECISION,
+  coord_12 DOUBLE PRECISION,
+  coord_13 DOUBLE PRECISION,
+  coord_14 DOUBLE PRECISION,
+  coord_15 DOUBLE PRECISION,
+  coord_16 DOUBLE PRECISION,
+  coord_17 DOUBLE PRECISION,
+  coord_18 DOUBLE PRECISION,
+  coord_19 DOUBLE PRECISION,
+  coord_20 DOUBLE PRECISION,
+  coord_21 DOUBLE PRECISION,
+  coord_22 DOUBLE PRECISION,
+  coord_23 DOUBLE PRECISION,
+  coord_24 DOUBLE PRECISION,
+  coord_25 DOUBLE PRECISION,
+  imported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (release_id, sample_id)
+);
+
 CREATE INDEX IF NOT EXISTS samples_release_idx ON samples (release_id);
 CREATE INDEX IF NOT EXISTS samples_genetic_id_idx ON samples (genetic_id);
 CREATE INDEX IF NOT EXISTS samples_group_id_idx ON samples (group_id);
@@ -117,6 +153,10 @@ CREATE INDEX IF NOT EXISTS samples_has_coordinates_idx ON samples (has_coordinat
 CREATE INDEX IF NOT EXISTS samples_geom_gist_idx ON samples USING GIST (geom);
 CREATE INDEX IF NOT EXISTS admixture_values_sample_idx ON admixture_values (sample_id);
 CREATE INDEX IF NOT EXISTS admixture_values_run_component_idx ON admixture_values (run_id, component_index);
+CREATE INDEX IF NOT EXISTS g25_coordinates_release_idx ON g25_coordinates (release_id);
+CREATE INDEX IF NOT EXISTS g25_coordinates_sample_idx ON g25_coordinates (sample_id);
+CREATE INDEX IF NOT EXISTS g25_coordinates_genetic_id_idx ON g25_coordinates (release_id, genetic_id);
+CREATE INDEX IF NOT EXISTS g25_coordinates_source_idx ON g25_coordinates (release_id, source);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sample_map_points AS
 SELECT
@@ -354,6 +394,7 @@ CREATE TABLE IF NOT EXISTS genotype_datasets (
   row_bytes INTEGER NOT NULL CHECK (row_bytes >= 48),
   header_sample_hash TEXT,
   header_variant_hash TEXT,
+  is_active BOOLEAN NOT NULL DEFAULT false,
   imported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (release_id, name)
 );
@@ -398,6 +439,28 @@ CREATE TABLE IF NOT EXISTS genotype_variant_calls (
 );
 
 CREATE INDEX IF NOT EXISTS genotype_datasets_release_idx ON genotype_datasets (release_id, imported_at DESC, id DESC);
+ALTER TABLE genotype_datasets ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT false;
+WITH latest_unselected_dataset AS (
+  SELECT id
+  FROM (
+    SELECT
+      gd.id,
+      gd.release_id,
+      row_number() OVER (PARTITION BY gd.release_id ORDER BY gd.imported_at DESC, gd.id DESC) AS dataset_rank
+    FROM genotype_datasets gd
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM genotype_datasets active_gd
+      WHERE active_gd.release_id = gd.release_id AND active_gd.is_active
+    )
+  ) ranked
+  WHERE dataset_rank = 1
+)
+UPDATE genotype_datasets gd
+SET is_active = true
+FROM latest_unselected_dataset latest
+WHERE gd.id = latest.id;
+CREATE UNIQUE INDEX IF NOT EXISTS genotype_datasets_one_active_per_release_idx ON genotype_datasets (release_id) WHERE is_active;
 CREATE INDEX IF NOT EXISTS genotype_dataset_samples_sample_idx ON genotype_dataset_samples (sample_id);
 CREATE INDEX IF NOT EXISTS genotype_variants_dataset_snp_idx ON genotype_variants (dataset_id, snp_id);
 CREATE INDEX IF NOT EXISTS genotype_variants_snp_lower_pattern_idx ON genotype_variants ((lower(snp_id)) text_pattern_ops);

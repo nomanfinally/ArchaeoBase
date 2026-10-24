@@ -784,6 +784,7 @@ button:disabled {
 .time-window-panel {
   flex: 0 0 auto;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0;
   padding: 6px 10px;
   border-bottom: 1px solid var(--line);
@@ -807,8 +808,9 @@ button:disabled {
 }
 
 .time-window-panel-grid {
+  width: 100%;
   display: grid;
-  grid-template-columns: minmax(206px, 250px) minmax(420px, 1fr) minmax(180px, 260px);
+  grid-template-columns: minmax(176px, 210px) minmax(0, 1fr) minmax(340px, 400px);
   align-items: stretch;
   gap: 8px;
 }
@@ -833,7 +835,7 @@ button:disabled {
 }
 
 .time-window-panel .year-input-group {
-  grid-template-columns: minmax(0, 1fr) 58px;
+  grid-template-columns: minmax(0, 1fr) 52px;
   gap: 5px;
 }
 
@@ -904,7 +906,7 @@ button:disabled {
 
 .time-window-panel .period-presets {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-content: start;
   gap: 4px;
   margin: 0;
@@ -916,11 +918,13 @@ button:disabled {
 }
 
 .time-window-panel .period-presets button {
+  min-width: 0;
   min-height: 21px;
   justify-content: flex-start;
   gap: 4px;
-  padding: 2px 6px 2px 5px;
+  padding: 2px 5px;
   font-size: 11px;
+  overflow: hidden;
 }
 
 .time-window-panel .period-check {
@@ -1044,7 +1048,7 @@ button:disabled {
 }
 
 .time-window-panel .time-window-inputs .year-input-group {
-  grid-template-columns: minmax(0, 1fr) 58px;
+  grid-template-columns: minmax(0, 1fr) 52px;
   gap: 5px;
 }
 
@@ -1363,6 +1367,9 @@ button:disabled {
 }
 
 .period-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

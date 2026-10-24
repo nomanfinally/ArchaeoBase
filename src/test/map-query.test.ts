@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assessCoordinate } from "@/lib/map/coordinate-sanity";
-import { periodInfo } from "@/lib/periods";
+import { defaultPeriodDefinitions, periodInfo } from "@/lib/periods";
 import {
   buildAnchoredMapPositions,
   prepareMapCache,
@@ -36,6 +36,27 @@ function row(overrides: Partial<MapCacheSourceRow>): MapCacheSourceRow {
     longitude: -77.8,
     ...overrides
   };
+}
+
+function hexToRgb(hex: string) {
+  const normalized = hex.replace("#", "");
+  return {
+    r: Number.parseInt(normalized.slice(0, 2), 16),
+    g: Number.parseInt(normalized.slice(2, 4), 16),
+    b: Number.parseInt(normalized.slice(4, 6), 16)
+  };
+}
+
+function colorDistance(firstHex: string, secondHex: string) {
+  const first = hexToRgb(firstHex);
+  const second = hexToRgb(secondHex);
+  return Math.hypot(first.r - second.r, first.g - second.g, first.b - second.b);
+}
+
+function expectSeparatedShades(colors: string[], minimumDistance = 50) {
+  for (let index = 1; index < colors.length; index += 1) {
+    expect(colorDistance(colors[index - 1], colors[index])).toBeGreaterThanOrEqual(minimumDistance);
+  }
 }
 
 describe("map cache helpers", () => {
@@ -185,18 +206,35 @@ describe("map cache helpers", () => {
     expect(periodInfo(65000).label).toBe("Unknown");
   });
 
-  it("keeps categorical period colors separated between Bronze Age and Modern", () => {
+  it("keeps categorical period colors separated within broad eras", () => {
+    const mesolithicPeriods = [11500, 9000].map((dateMeanBp) => periodInfo(dateMeanBp));
+    const neolithicPeriods = [7600, 7000, 6500].map((dateMeanBp) => periodInfo(dateMeanBp));
     const bronzePeriods = [5000, 4000, 3700, 3300].map((dateMeanBp) => periodInfo(dateMeanBp));
     const modern = periodInfo(100);
 
     expect(modern.label).toBe("Modern");
-    expect(modern.light).toBe("#16a34a");
+    expect(modern.light).toBe("#ca8a04");
+    expect(mesolithicPeriods.map((period) => period.label)).toEqual([
+      "Mesolithic (Early)",
+      "Mesolithic (Late)"
+    ]);
+    expect(neolithicPeriods.map((period) => period.label)).toEqual([
+      "Neolithic (EN)",
+      "Neolithic (MN)",
+      "Neolithic (LN)"
+    ]);
     expect(bronzePeriods.map((period) => period.label)).toEqual([
       "Bronze Age (EBA)",
       "Bronze Age (MBA)",
       "Bronze Age (MLBA)",
       "Bronze Age (LBA)"
     ]);
+    expectSeparatedShades(mesolithicPeriods.map((period) => period.dark));
+    expectSeparatedShades(neolithicPeriods.map((period) => period.dark));
+    expectSeparatedShades(bronzePeriods.map((period) => period.dark));
+    expect(mesolithicPeriods[0].dark).toBe("#2563eb");
+    expect(colorDistance(mesolithicPeriods[0].dark, "#ffffff")).toBeGreaterThan(200);
+    expect(defaultPeriodDefinitions.every((period) => colorDistance(period.dark, "#ffffff") > 200)).toBe(true);
     expect(bronzePeriods.some((period) => period.light === modern.light || period.dark === modern.dark)).toBe(false);
     expect(new Set(bronzePeriods.map((period) => period.light)).size).toBe(bronzePeriods.length);
   });
